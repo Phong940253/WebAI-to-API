@@ -30,15 +30,15 @@ class GeminiModels(str, Enum):
     Available Gemini models (gemini-webapi >= 1.19.2).
     """
 
-    # Gemini 3.0 Series
-    PRO = "gemini-3.0-pro"
-    FLASH = "gemini-3.0-flash"
-    FLASH_THINKING = "gemini-3.0-flash-thinking"
+    # Gemini 3 Series (current canonical names)
+    PRO = "gemini-3-pro"
+    FLASH = "gemini-3-flash"
+    FLASH_THINKING = "gemini-3-flash-thinking"
 
 
 class GeminiRequest(BaseModel):
     message: str
-    model: GeminiModels = Field(default=GeminiModels.FLASH, description="Model to use for Gemini.")
+    model: Optional[str] = Field(default=GeminiModels.FLASH.value, description="Model to use for Gemini.")
     files: Optional[List[str]] = []
 
 class OpenAIChatRequest(BaseModel):
@@ -49,6 +49,9 @@ class OpenAIChatRequest(BaseModel):
     # that send model names like "gemini-3-pro-image-preview".
     model: Optional[str] = None
     stream: Optional[bool] = False
+    # OpenAI-compatible retention control.
+    # store=False -> temporary mode (not saved in Gemini history).
+    store: Optional[bool] = None
 
 class Part(BaseModel):
     text: str

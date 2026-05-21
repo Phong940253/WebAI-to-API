@@ -12,6 +12,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy project files
 COPY . .
 
+# Ensure imports like `app.main` resolve from the src/ directory.
+ENV PYTHONPATH=/app/src
+
 # Default Port 
 EXPOSE 6969
 

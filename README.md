@@ -105,7 +105,8 @@ curl http://localhost:6969/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "gemini-3.0-flash",
-    "messages": [{ "role": "user", "content": "Hello!" }]
+    "messages": [{ "role": "user", "content": "Hello!" }],
+    "store": false
   }'
 ```
 
@@ -122,23 +123,31 @@ client = OpenAI(
 response = client.chat.completions.create(
     model="gemini-3.0-flash",
     messages=[{"role": "user", "content": "Hello!"}],
+  store=False,
 )
 print(response.choices[0].message.content)
 ```
+
+`/v1/chat/completions` supports the OpenAI-style `store` flag:
+- `store: false` -> temporary chat (auto-delete / not saved in Gemini history)
+- `store: true` -> allow storing in Gemini history
+
+If `store` is omitted, server default is controlled by `AI.chat_completions_auto_delete`
+in `config.conf` (default: `true`).
 
 ---
 
 ## Endpoints
 
-| Method | Path                   | Description                                  |
-| ------ | ---------------------- | -------------------------------------------- |
-| `GET`  | `/v1/models`           | List available models                        |
-| `POST` | `/v1/chat/completions` | OpenAI-compatible chat (streaming supported) |
-| `POST` | `/gemini`              | Stateless single-turn request                |
-| `POST` | `/gemini-chat`         | Stateful multi-turn chat                     |
-| `POST` | `/translate`           | Translation (alias for `/gemini-chat`)       |
-| `GET`  | `/admin`               | Admin dashboard                              |
-| `GET`  | `/docs`                | Swagger UI                                   |
+| Method | Path                   | Description                                                     |
+| ------ | ---------------------- | --------------------------------------------------------------- |
+| `GET`  | `/v1/models`           | List available models                                           |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat (streaming supported, `store` supported) |
+| `POST` | `/gemini`              | Stateless single-turn request                                   |
+| `POST` | `/gemini-chat`         | Stateful multi-turn chat                                        |
+| `POST` | `/translate`           | Translation (alias for `/gemini-chat`)                          |
+| `GET`  | `/admin`               | Admin dashboard                                                 |
+| `GET`  | `/docs`                | Swagger UI                                                      |
 
 ---
 

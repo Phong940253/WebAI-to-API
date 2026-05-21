@@ -31,6 +31,10 @@ router = APIRouter()
 # Explicit aliases: covers Home Assistant / OpenAI-style names and legacy names
 _MODEL_ALIASES: dict[str, GeminiModels] = {
     # gemini-webapi canonical names (pass-through)
+    "gemini-3-pro":              GeminiModels.PRO,
+    "gemini-3-flash":            GeminiModels.FLASH,
+    "gemini-3-flash-thinking":   GeminiModels.FLASH_THINKING,
+    # Legacy aliases
     "gemini-3.0-pro":            GeminiModels.PRO,
     "gemini-3.0-flash":          GeminiModels.FLASH,
     "gemini-3.0-flash-thinking": GeminiModels.FLASH_THINKING,
@@ -48,9 +52,6 @@ _MODEL_ALIASES: dict[str, GeminiModels] = {
     "gemini-2.0-pro":            GeminiModels.PRO,
     "gemini-2.5-pro":            GeminiModels.PRO,
     "gemini-2.5-flash":          GeminiModels.FLASH,
-    "gemini-3-pro":              GeminiModels.PRO,
-    "gemini-3-flash":            GeminiModels.FLASH,
-    "gemini-3-flash-thinking":   GeminiModels.FLASH_THINKING,
 }
 
 
@@ -337,6 +338,17 @@ async def chat_completions(request: OpenAIChatRequest):
     gemini_model = _resolve_model(request.model)
     model_value = gemini_model.value
 
+    # Auto-delete behavior for Gemini history:
+    # - If request.store is set, honor it (store=False => temporary=True)
+    # - Otherwise use config default (default: true => temporary chats)
+    auto_delete_default = CONFIG.getboolean(
+        "AI", "chat_completions_auto_delete", fallback=True
+    )
+    if request.store is None:
+        temporary_mode = auto_delete_default
+    else:
+        temporary_mode = not bool(request.store)
+
     # Parse all messages — collect text parts and any image file paths
     conversation_parts: List[str] = []
     all_file_paths: List[Path] = []
@@ -376,6 +388,7 @@ async def chat_completions(request: OpenAIChatRequest):
             message=final_prompt,
             model=model_value,
             files=files_arg,
+            temporary=temporary_mode,
         )
 
         images = await serialize_response_images(

@@ -1,6 +1,7 @@
 services:
   web_ai:
-    image: ghcr.io/leolionart/webai-to-api:latest
+    build: .
+    image: webai-to-api:dev
     container_name: web_ai_server
     restart: always
     ports:

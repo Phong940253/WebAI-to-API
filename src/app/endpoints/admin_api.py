@@ -22,6 +22,17 @@ from app.services.telegram_notifier import TelegramNotifier
 
 router = APIRouter(prefix="/api/admin", tags=["Admin API"])
 
+_MODEL_ALIASES: dict[str, str] = {
+    "gemini-3.0-pro": "gemini-3-pro",
+    "gemini-3.0-flash": "gemini-3-flash",
+    "gemini-3.0-flash-thinking": "gemini-3-flash-thinking",
+}
+
+
+def _normalize_model_name(model: str) -> str:
+    normalized = model.strip().lower()
+    return _MODEL_ALIASES.get(normalized, normalized)
+
 # Read version once at import time
 def _read_version() -> str:
     try:
@@ -95,9 +106,12 @@ async def get_status():
 @router.get("/config")
 async def get_config():
     """Return current configuration (masking sensitive cookie values)."""
+    current_model = _normalize_model_name(
+        CONFIG["AI"].get("default_model_gemini", "gemini-3-pro")
+    )
     return {
         "browser": CONFIG["Browser"].get("name", "chrome"),
-        "model": CONFIG["AI"].get("default_model_gemini", "gemini-3.0-pro"),
+        "model": current_model,
         "proxy": CONFIG["Proxy"].get("http_proxy", ""),
         "cookies_set": bool(
             CONFIG["Cookies"].get("gemini_cookie_1psid")
@@ -111,9 +125,9 @@ async def get_config():
         ),
         "gemini_enabled": CONFIG.getboolean("EnabledAI", "gemini", fallback=True),
         "available_models": [
-            "gemini-3.0-pro",
-            "gemini-3.0-flash",
-            "gemini-3.0-flash-thinking",
+            "gemini-3-pro",
+            "gemini-3-flash",
+            "gemini-3-flash-thinking",
         ],
     }
 
@@ -172,9 +186,9 @@ async def update_cookies(request: CookieUpdateRequest):
 @router.post("/config/model")
 async def update_model(request: ModelUpdateRequest):
     """Update the default Gemini model."""
-    CONFIG["AI"]["default_model_gemini"] = request.model
+    CONFIG["AI"]["default_model_gemini"] = _normalize_model_name(request.model)
     write_config(CONFIG)
-    return {"success": True, "model": request.model}
+    return {"success": True, "model": CONFIG["AI"]["default_model_gemini"]}
 
 
 @router.post("/config/proxy")

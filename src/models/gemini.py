@@ -25,7 +25,13 @@ class MyGeminiClient:
         """Initialize the Gemini client."""
         await self.client.init()
 
-    async def generate_content(self, message: str, model: str, files: Optional[List[Union[str, Path]]] = None):
+    async def generate_content(
+        self,
+        message: str,
+        model: str,
+        files: Optional[List[Union[str, Path]]] = None,
+        temporary: Optional[bool] = None,
+    ):
         """
         Generate content with automatic retry on transient errors.
         gemini-webapi reinitializes its session after zombie/parse errors
@@ -34,7 +40,14 @@ class MyGeminiClient:
         last_exc: Exception | None = None
         for attempt in range(_MAX_RETRIES + 1):
             try:
-                return await self.client.generate_content(message, model=model, files=files)
+                if temporary is None:
+                    return await self.client.generate_content(message, model=model, files=files)
+                return await self.client.generate_content(
+                    message,
+                    model=model,
+                    files=files,
+                    temporary=temporary,
+                )
             except Exception as e:
                 last_exc = e
                 err_lower = str(e).lower()
