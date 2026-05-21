@@ -189,18 +189,52 @@ async def _extract_multimodal_content(content) -> Tuple[str, List[Path]]:
 
 @router.get("/v1/models")
 async def list_models():
-    """List available models in OpenAI-compatible format."""
-    now = int(time.time())
-    models = [
-        {
-            "id": m.value,
-            "object": "model",
-            "created": now,
-            "owned_by": "google",
-        }
-        for m in GeminiModels
-    ]
-    return {"object": "list", "data": models}
+    """List available models from Gemini API in OpenAI-compatible format."""
+    try:
+        gemini_client = get_gemini_client()
+    except GeminiClientNotInitializedError:
+        # Fallback to local enum if client not initialized
+        now = int(time.time())
+        models = [
+            {
+                "id": m.value,
+                "object": "model",
+                "created": now,
+                "owned_by": "google",
+            }
+            for m in GeminiModels
+        ]
+        return {"object": "list", "data": models}
+
+    try:
+        # Get available models from the Gemini API client
+        available_models = gemini_client.client.list_models()
+        now = int(time.time())
+        models = [
+            {
+                "id": model.model_name,
+                "object": "model",
+                "created": now,
+                "owned_by": "google",
+                "display_name": model.display_name,
+            }
+            for model in available_models
+        ]
+        return {"object": "list", "data": models}
+    except (AttributeError, Exception) as e:
+        logger.warning(f"Failed to get models from Gemini API: {e}, falling back to enum")
+        # Fallback if list_models doesn't exist or fails
+        now = int(time.time())
+        models = [
+            {
+                "id": m.value,
+                "object": "model",
+                "created": now,
+                "owned_by": "google",
+            }
+            for m in GeminiModels
+        ]
+        return {"object": "list", "data": models}
 
 
 # ---------------------------------------------------------------------------
