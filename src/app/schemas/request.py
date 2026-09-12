@@ -249,7 +249,7 @@ class OpenAIChatRequest(BaseModel):
     provider_options: Optional[ProviderOptions] = None
     store: Optional[bool] = Field(
         default=None,
-        description="Legacy compatibility flag. store=False routes /v1/chat/completions to temporary mode (not saved in history).",
+        description="Legacy compatibility flag. Default (not sent) is temporary mode; store=True opts into persistent conversations.",
     )
 
     @field_validator("tools", mode="before")

@@ -222,9 +222,12 @@ async def chat_completions(request: OpenAIChatRequest, http_request: Request):
         # Clients should NOT rely on this field.
         object.__setattr__(request, "_http_request_id", http_request.state.request_id)
 
-    # Legacy compatibility: store=False forces temporary mode (not saved in history).
-    # Preserved from pre-merge work; upstream uses a separate /v1/temporary/chat/completions endpoint.
+    # Default-temporary compatibility (pre-merge behavior: chat_completions_auto_delete=true).
+    # store=True -> persistent; store=False -> temporary (may 400 if conversation_id is set).
+    # store=None (not sent) -> temporary, unless conversation_id is set (then persistent to honor continuity).
     if request.store is False:
+        return await handle_temporary_chat_completions(request)
+    if request.store is None and request.conversation_id is None:
         return await handle_temporary_chat_completions(request)
 
     # Resolve provider and model name via the static factory
