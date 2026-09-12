@@ -44,7 +44,13 @@ class SQLiteConversationRepository(IConversationRepository):
         if os.name == "posix":
             os.makedirs(path, mode=0o700, exist_ok=True)
             if harden_existing:
-                os.chmod(path, 0o700)
+                try:
+                    os.chmod(path, 0o700)
+                except PermissionError:
+                    # Bind mounts (e.g. Docker Desktop Windows mounts) may not
+                    # permit chmod even though the directory is writable.
+                    # Hardening is best-effort; the directory remains usable.
+                    logger.warning(f"Could not chmod directory '{path}' to 0o700; continuing.")
         else:
             os.makedirs(path, exist_ok=True)
 
@@ -54,7 +60,11 @@ class SQLiteConversationRepository(IConversationRepository):
 
         fd = os.open(self.db_path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
-            os.fchmod(fd, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+            except PermissionError:
+                # Same bind-mount limitation as _ensure_directory; best-effort.
+                logger.warning(f"Could not fchmod database file '{self.db_path}' to 0o600; continuing.")
         finally:
             os.close(fd)
         self._harden_existing_sidecars()
@@ -74,6 +84,9 @@ class SQLiteConversationRepository(IConversationRepository):
                 # SQLite may remove a sidecar between the existence check and chmod.
                 if os.path.exists(sidecar_path) or not os.path.isdir(parent_dir):
                     raise
+            except PermissionError:
+                # Bind mounts may not permit chmod; best-effort hardening.
+                logger.warning(f"Could not chmod sidecar '{sidecar_path}' to 0o600; continuing.")
 
     @contextmanager
     def _connection(self):
