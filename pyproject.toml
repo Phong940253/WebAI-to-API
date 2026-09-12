@@ -1,45 +1,62 @@
 # File: pyproject.toml
 
-[tool.poetry]
+[project]
 name = "webai-to-api"
 version = "0.8.0"
 description = "WebAI-to-API is a modular web server built with FastAPI, designed to manage requests across AI services."
-authors = ["Mohammad <m.khani2810@gmail.com>"]
+authors = [
+    { name = "Mohammad", email = "m.khani2810@gmail.com" },
+]
 license = "MIT"
 readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dynamic = ["dependencies"]
+
+[tool.poetry]
 
 packages = [
     { include = "app", from = "src" },
-    { include = "models", from = "src" },
-    { include = "schemas", from = "src" },
 ]
 
 [tool.poetry.dependencies]
-python = ">=3.10,<4.0"
+python = ">=3.11,<3.13"
 fastapi = ">=0.115.7,<0.130.0"
+jinja2 = ">=3.1.0,<4.0.0"
 browser-cookie3 = ">=0.20.1,<0.21.0"
 httpx = ">=0.28.1,<0.29.0"
-curl-cffi = ">=0.7.4,<0.15.0"
-# gemini-webapi >= 2.0: dynamic model discovery (resolve_model / list_models /
-# extended_thinking). Pinned range so pip/Docker pull 2.1.1 on python>=3.11 and
-# fall back to 2.0.0 on python 3.10. No git dependency (published on PyPI).
-gemini-webapi = ">=2.0.0"
+curl-cffi = ">=0.7.4"
+gemini-webapi = "==2.1.0"
 uvicorn = {extras = ["standard"], version = ">=0.34.0,<0.41.0"}
-sse-starlette = ">=2.1.0,<4.0.0"
-jinja2 = ">=3.1.0,<4.0.0"
 
 # Windows-specific dependencies for cookie decryption
 # These will only be installed on Windows systems
 pywin32 = { version = "==308", platform = "win32" }
 pycryptodomex = { version = ">=3.21.0,<4.0.0", platform = "win32" }
 tomli = "^2.2.1"
-g4f = "^6.8.2"
 python-multipart = "^0.0.21"
 aiohttp-socks = "^0.11.0"
-nodriver = "^0.48.1"
-platformdirs = "^4.3.8"
+playwright = "^1.60.0"
 
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.4"
+pytest-asyncio = "^0.26"
+pytest-mock = "^3.15"
+pytest-cov = "^6.0.0"
+pytest-timeout = "^2.3.1"
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+testpaths = ["tests"]
+asyncio_default_test_loop_scope = "function"
+timeout = 30
+# Temporary workaround for Starlette using deprecated anyio.abc.BlockingPortal.
+# Remove once Starlette no longer emits this warning.
+# Tracking: #142
+filterwarnings = [
+    "ignore:The anyio\\.abc\\.BlockingPortal alias is deprecated, use anyio\\.from_thread\\.BlockingPortal instead\\.:DeprecationWarning:starlette\\.testclient",
+]
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"

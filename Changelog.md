@@ -1,25 +1,70 @@
-### Changelog – WebAI to API
+### WebAI to API
 
-#### v0.8.0 – Unreleased
+#### v0.7.0 – 2026-09-03
+
+#### Added
+
+- Added the new Stateless API for OpenAI-compatible clients. (`v1/stateless/chat/completions`)
+- Added support for streaming, tool calling, and client-managed conversation history. (Beta)
 
 ##### Changed
 
-- **Upgraded `gemini-webapi` to the latest master (>= 2.0).** This introduces dynamic
-  model discovery per account via `list_models()` / `resolve_model()`.
-- **Hard switch to discovered model names** (`gemini-pro`, `gemini-flash`,
-  `gemini-flash-lite`). All `gemini-3-*` / `gemini-2-*` hardcoded names were removed.
-  Legacy/variant model names sent by clients are now resolved at request time and fall
-  back to the account default when unknown.
-- **Extended thinking is now a flag** (`extended_thinking`), not a separate model.
-  Enable it by appending `thinking` to a model name or by sending `extended_thinking: true`
-  on OpenAI `/chat/completions` requests.
-- The admin API now returns the account's dynamically discovered models instead of a
-  static list, so the dashboard dropdown stays in sync with what the account can use.
+- Improved OpenAI API compatibility.
+- Deprecated the legacy Temporary Chat endpoint while keeping backward compatibility. (`/v1/temporary/chat/completions`)
+- Improved server startup and shutdown behavior.
+- Updated project dependencies.
+
+##### Fixed
+
+- Fixed various issues with streaming, request handling.
+
+---
+
+#### v0.6.0 – 2026-08-26
+
+#### Added
+
+- Added support for file attachments and generated artifacts, including images, videos, audio, and documents.
+- Added `POST /v1/temporary/chat/completions` for Gemini WebAPI temporary conversations that are not stored in Gemini history and do not create SQLite conversation snapshots.
+- Added support for `extended_thinking`.
+- Added automatic update checking and version updates.
+
+##### Changed
+
+- Updated `/translate` to use Gemini temporary requests so translation conversations are not stored in Gemini history.
+
+##### Fixed
+
+- Fixed various minor and major issues.
+
+---
+
+#### v0.5.0 – 2026-06-01
 
 ##### Added
 
-- Centralized `app/services/model_resolver.py` for model resolution and extended-thinking
-  detection (replaces the per-endpoint alias tables).
+- Added `Atlas Cloud` provider support.
+- Added health, readiness, and runtime diagnostics endpoints.
+- Added provider-scoped authentication configuration.
+- Added contributor and commercial licensing framework.
+- Expanded automated test coverage across core runtime components.
+
+##### Fixed
+
+- Restored `Playwright` bootstrap authentication flow.
+- Improved authentication source discovery and fallback behavior.
+- Hardened browser lifecycle, session recovery, and shutdown handling.
+- Fixed Playwright interaction timeout configuration.
+- Fixed authentication issues related to cookie configuration and loading.
+
+##### Changed
+
+- Migrated to a provider-centric architecture with unified backend routing.
+- Unified Gemini WebAPI and Playwright execution models behind a common provider layer.
+- Removed the legacy `g4f` integration and related dependencies.
+- Improved runtime observability, diagnostics, and request correlation.
+- Updated Docker deployment guidance and Playwright onboarding workflow.
+- Expanded architecture documentation and runtime specifications.
 
 ---
 
@@ -53,7 +98,7 @@
 ##### Changed
 
 - Updated internal libraries.
-- Upgraded to [Gemini API v1.14.0](https://github.com/HanaokaYuzu/Gemini-API).
+- Upgraded to [Gemini Web API v1.14.0](https://github.com/HanaokaYuzu/Gemini-API).
 
 ##### Fixed
 

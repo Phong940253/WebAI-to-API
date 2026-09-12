@@ -1,113 +1,45 @@
 # src/app/config.py
 import configparser
-import logging
 import os
-import shutil
 
-logger = logging.getLogger(__name__)
+from app.config_contract import load_effective_config, normalize_strict_boolean
+from app.env import load_local_env
+from app.utils.runtime_paths import (
+    get_default_auth_state_dir,
+    get_default_conversation_snapshot_db,
+    get_default_playwright_cache_dir,
+    get_runtime_dir,
+    resolve_auth_state_dir,
+    resolve_conversation_snapshot_db,
+)
 
-# Allow overriding config path via environment variable.
-# In Docker, set CONFIG_PATH=/app/data/config.conf with a volume on /app/data.
-DEFAULT_CONFIG_PATH = os.environ.get("CONFIG_PATH", "config.conf")
-
-
-def _ensure_config_exists(config_file: str) -> None:
-    """If config_file doesn't exist, copy from bundled default or create empty.
-
-    Handles the Docker volume edge-case where Docker creates a *directory* at the
-    config path when the host file doesn't exist yet.  We remove the empty directory
-    and replace it with the proper file so no manual intervention is required.
-    """
-    if os.path.isdir(config_file):
-        # Docker created a directory here instead of a file — remove it and continue.
-        try:
-            shutil.rmtree(config_file)
-            logger.info(
-                f"Removed directory at '{config_file}' (created by Docker volume mount); "
-                "replacing with config file."
-            )
-        except Exception as e:
-            logger.error(f"Could not remove directory '{config_file}': {e}")
-            return
-
-    if os.path.exists(config_file):
-        return
-
-    # Create parent directory if needed
-    parent = os.path.dirname(config_file)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-
-    # Copy bundled template as starting point
-    bundled = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "config.conf")
-    if os.path.isfile(bundled):
-        shutil.copy2(bundled, config_file)
-        logger.info(f"Copied bundled config to '{config_file}'")
-    else:
-        # Fallback: create an empty file so configparser has something to read
-        open(config_file, "w", encoding="utf-8").close()
-        logger.info(f"Created empty config file at '{config_file}'")
+load_local_env()
 
 
-def load_config(config_file: str = None) -> configparser.ConfigParser:
-    if config_file is None:
-        config_file = DEFAULT_CONFIG_PATH
-    _ensure_config_exists(config_file)
-    config = configparser.ConfigParser()
-    try:
-        # FIX: Explicitly specify UTF-8 encoding to prevent UnicodeDecodeError on Windows.
-        # This is the standard and most compatible way to handle text files across platforms.
-        config.read(config_file, encoding="utf-8")
-    except FileNotFoundError:
-        logger.warning(
-            f"Config file '{config_file}' not found. Creating a default one."
-        )
-    except Exception as e:
-        logger.error(f"Error reading config file: {e}")
-
-    # Set default sections and values if they don't exist
-    if "Browser" not in config:
-        config["Browser"] = {"name": "chrome"}
-    if "Cookies" not in config:
-        config["Cookies"] = {}
-    if "AI" not in config:
-        config["AI"] = {"default_model_gemini": "gemini-flash"}
-    if "chat_completions_auto_delete" not in config["AI"]:
-        # True = /v1/chat/completions runs in temporary mode by default.
-        config["AI"]["chat_completions_auto_delete"] = "true"
-    if "Proxy" not in config:
-        config["Proxy"] = {"http_proxy": ""}
-    if "Telegram" not in config:
-        config["Telegram"] = {
-            "enabled": "false",
-            "bot_token": "",
-            "chat_id": "",
-            "cooldown_seconds": "60",
-        }
-
-    # Save changes to the configuration file, also with UTF-8 encoding.
-    try:
-        with open(config_file, "w", encoding="utf-8") as f:
-            config.write(f)
-        # logger.info("Configuration loaded/updated successfully.")
-    except Exception as e:
-        logger.error(f"Error writing to config file: {e}")
-
-    return config
-
-
-def write_config(config: configparser.ConfigParser, config_file: str = None) -> bool:
-    """Write the current config state to disk."""
-    if config_file is None:
-        config_file = DEFAULT_CONFIG_PATH
-    try:
-        with open(config_file, "w", encoding="utf-8") as f:
-            config.write(f)
-        return True
-    except Exception as e:
-        logger.error(f"Error writing to config file: {e}")
-        return False
+def load_config(config_file: str = "config.conf"):
+    return load_effective_config(config_file)
 
 
 # Load configuration globally
 CONFIG = load_config()
+
+
+def resolve_logging_config(
+    cli_log_level: str | None,
+    cli_disable_access_logs: bool,
+    config: configparser.ConfigParser | None = None,
+) -> tuple[str, bool]:
+    """Resolves log level and access log settings based on CLI, env, and config precedence."""
+    config = config or CONFIG
+
+    # 1. Resolve log level precedence: explicit CLI > LOG_LEVEL env > config.conf > INFO
+    env_log_level = os.environ.get("LOG_LEVEL")
+    conf_log_level = config.get("Logging", "level", fallback=None) if config.has_section("Logging") else None
+    resolved_level = cli_log_level or env_log_level or conf_log_level or "INFO"
+
+    # 2. Resolve access logs precedence: explicit CLI --disable-access-logs > DISABLE_ACCESS_LOGS env > config.conf > false
+    env_disable_access = os.environ.get("DISABLE_ACCESS_LOGS", "false").lower() in ("true", "1", "yes", "on")
+    conf_disable_access = config.getboolean("Logging", "disable_access_logs", fallback=False) if config.has_section("Logging") else False
+    resolved_disable_access = cli_disable_access_logs or env_disable_access or conf_disable_access
+
+    return resolved_level, resolved_disable_access

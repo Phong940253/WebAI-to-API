@@ -15,7 +15,14 @@ on dynamic discovery so the server keeps working as Google rotates model names.
 from typing import Optional, Tuple
 
 from app.logger import logger
-from schemas.request import DEFAULT_MODEL
+
+try:
+    from app.schemas.request import DEFAULT_MODEL
+except ImportError:
+    try:
+        from schemas.request import DEFAULT_MODEL
+    except ImportError:
+        DEFAULT_MODEL = "gemini-3-flash"
 
 # Names shown only when the client isn't initialized yet (so /v1/models and the admin
 # dropdown still render something sensible).

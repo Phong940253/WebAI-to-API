@@ -1,407 +1,290 @@
 # src/app/endpoints/chat.py
-import json
-import time
-from pathlib import Path
-from typing import List, Optional, Tuple
-
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
-
-from app.config import CONFIG
+from fastapi import APIRouter, HTTPException, Request
 from app.logger import logger
-from app.services.gemini_client import GeminiClientNotInitializedError, get_gemini_client
-from app.services.model_resolver import (
-    FALLBACK_MODELS,
-    model_display,
-    resolve_gemini_model,
+from app.openapi.chat_completions import (
+    CHAT_COMPLETIONS_REQUEST_EXAMPLES,
+    CHAT_COMPLETIONS_RESPONSE_400,
+    CHAT_COMPLETIONS_RESPONSE_200,
+    STATELESS_CHAT_COMPLETIONS_ERROR_RESPONSES,
+    STATELESS_CHAT_COMPLETIONS_REQUEST_EXAMPLES,
+    STATELESS_CHAT_COMPLETIONS_RESPONSE_400,
+    TEMPORARY_CHAT_COMPLETIONS_REQUEST_EXAMPLES,
+    TEMPORARY_CHAT_COMPLETIONS_RESPONSE_400,
 )
-from app.services.telegram_notifier import TelegramNotifier
-from app.services.session_manager import get_translate_session_manager
-from app.utils.image_utils import (
-    cleanup_temp_files,
-    decode_base64_to_tempfile,
-    download_to_tempfile,
-    get_temp_dir,
-    serialize_response_images,
+from app.schemas.request import GeminiRequest, OpenAIChatRequest
+from app.services.gemini_client import (
+    acquire_current_gemini_lease,
+    GeminiClientNotInitializedError,
 )
-from schemas.request import DEFAULT_MODEL, GeminiRequest, OpenAIChatRequest
+from app.services.factory import ProviderFactory
+from app.services.model_catalog import list_models as build_model_catalog
+from app.services.model_catalog import list_stateless_models as build_stateless_model_catalog
+from app.services.openai_compatibility import validate_openai_request_compatibility
+from app.services.providers.gemini.stateless_chat import handle_stateless_chat_completions
+from app.services.providers.gemini.temporary_chat import (
+    handle_temporary_chat_completions,
+)
+from app.services.providers.gemini.shared import (
+    ensure_gemini_client_ready,
+    validate_direct_webapi_model_name,
+)
 
 router = APIRouter()
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _get_cookies(gemini_client) -> dict:
-    """Extract session cookies from the underlying Gemini web client."""
+@router.get(
+    "/v1/gems",
+    tags=["Utilities"],
+    summary="List Available Gems",
+    description="Returns available Gemini Gems associated with the account. Can be used to apply specific personas in chat requests."
+)
+async def list_gems():
     try:
-        return dict(gemini_client.client.cookies)
-    except Exception:
-        return {}
-
-
-async def _extract_multimodal_content(content) -> Tuple[str, List[Path]]:
-    """
-    Parse a message ``content`` field that may be:
-    - a plain string
-    - a list of content part dicts
-
-    Supports both Chat Completions and Responses API part types:
-    - Chat Completions: ``{"type": "text"|"image_url", ...}``
-    - Responses API:    ``{"type": "input_text"|"input_image", ...}``
-
-    For ``image_url``/``input_image``, the URL value may be:
-    - Chat Completions: ``{"image_url": {"url": "data:..."}}``)
-    - Responses API:    ``{"image_url": "data:..."}``  (direct string)
-
-    Returns ``(text_prompt, temp_file_paths)``.
-    Temp files are created for base64 data URIs and remote URL images; the caller
-    is responsible for cleaning them up after use.
-    """
-    if isinstance(content, str):
-        return content, []
-
-    if not isinstance(content, list):
-        return str(content) if content else "", []
-
-    text_parts: List[str] = []
-    file_paths: List[Path] = []
-
-    for part in content:
-        if not isinstance(part, dict):
-            continue
-
-        part_type = part.get("type", "")
-
-        # Text parts — Chat Completions ("text") and Responses API ("input_text")
-        if part_type in ("text", "input_text"):
-            txt = part.get("text", "")
-            if txt:
-                text_parts.append(txt)
-
-        # Image parts — Chat Completions ("image_url") and Responses API ("input_image")
-        elif part_type in ("image_url", "input_image"):
-            img_url_obj = part.get("image_url", {})
-            # Chat Completions: image_url is {"url": "...", "detail": "..."}
-            # Responses API:    image_url is a direct string "data:..." or "https://..."
-            url: str = img_url_obj.get("url", "") if isinstance(img_url_obj, dict) else str(img_url_obj)
-
-            if not url:
-                continue
-
-            if url.startswith("data:"):
-                # base64 data URI
-                try:
-                    temp_path = decode_base64_to_tempfile(url)
-                    file_paths.append(temp_path)
-                except ValueError as exc:
-                    logger.warning(f"Skipping invalid base64 image: {exc}")
-
-            elif url.startswith("file://"):
-                # Reference to a previously uploaded file — resolve file_id
-                file_id = url[len("file://"):]
-                # Sanitize
-                if "/" not in file_id and "\\" not in file_id and ".." not in file_id:
-                    candidate = get_temp_dir() / file_id
-                    if candidate.exists():
-                        file_paths.append(candidate)
-                    else:
-                        logger.warning(f"File not found for file_id: {file_id}")
-                else:
-                    logger.warning(f"Invalid file_id in URL: {url}")
-
-            elif url.startswith("http://") or url.startswith("https://"):
-                # Remote image URL — download to temp file
-                temp_path = await download_to_tempfile(url)
-                if temp_path:
-                    file_paths.append(temp_path)
-
-    return " ".join(text_parts), file_paths
-
-
-# ---------------------------------------------------------------------------
-# Model listing
-# ---------------------------------------------------------------------------
-
-@router.get("/v1/models")
-async def list_models():
-    """List available models from Gemini API in OpenAI-compatible format."""
-    try:
-        gemini_client = get_gemini_client()
-    except GeminiClientNotInitializedError:
-        # Fallback to the canonical name list if the client isn't initialized yet
-        now = int(time.time())
-        models = [
-            {
-                "id": name,
-                "object": "model",
-                "created": now,
-                "owned_by": "google",
-            }
-            for name in FALLBACK_MODELS
-        ]
-        return {"object": "list", "data": models}
-
-    try:
-        # Get available models from the Gemini API client (dynamic discovery).
-        available_models = gemini_client.client.list_models()
-        if not available_models:
-            raise ValueError("empty model list")
-        now = int(time.time())
-        models = [
-            {
-                "id": model.model_name,
-                "object": "model",
-                "created": now,
-                "owned_by": "google",
-                "display_name": model.display_name,
-            }
-            for model in available_models
-        ]
-        return {"object": "list", "data": models}
-    except Exception as e:
-        logger.warning(f"Failed to get models from Gemini API: {e}, falling back to default list")
-        now = int(time.time())
-        models = [
-            {
-                "id": name,
-                "object": "model",
-                "created": now,
-                "owned_by": "google",
-            }
-            for name in FALLBACK_MODELS
-        ]
-        return {"object": "list", "data": models}
-
-
-# ---------------------------------------------------------------------------
-# Translation endpoint
-# ---------------------------------------------------------------------------
-
-@router.post("/translate")
-async def translate_chat(request: GeminiRequest):
-    try:
-        gemini_client = get_gemini_client()
-    except GeminiClientNotInitializedError as e:
+        lease = acquire_current_gemini_lease()
+    except (GeminiClientNotInitializedError, RuntimeError) as e:
         raise HTTPException(status_code=503, detail=str(e))
 
-    session_manager = get_translate_session_manager()
-    if not session_manager:
-        raise HTTPException(status_code=503, detail="Session manager is not initialized.")
     try:
-        model_obj, extended = resolve_gemini_model(gemini_client.client, request.model)
-        response = await session_manager.get_response(
-            model_obj,
-            request.message,
-            request.files,
-            extended_thinking=extended or request.extended_thinking,
-        )
-        return {"response": response.text}
+        async with lease:
+            gems = await lease.client.fetch_gems()
+            return {
+                "gems": [
+                    {
+                        "id": gem.id,
+                        "name": gem.name,
+                        "description": gem.description,
+                        "predefined": gem.predefined,
+                    }
+                    for gem in gems
+                ]
+            }
+    except Exception as e:
+        logger.error(f"Error fetching gems: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error fetching gems: {str(e)}")
+
+
+@router.post(
+    "/translate",
+    tags=["Translation"],
+    summary="Translate Extension Compatibility",
+    description="Extension-specific translation endpoint retained for compatibility with Translate It!-style browser extensions. This endpoint executes stateless Gemini WebAPI requests concurrently, sends them as temporary requests so they are not saved in Gemini history, has no `conversation_id` support, does not support streaming, and does not maintain conversation state. The client is responsible for sending a translation-specific prompt. For persistent translation workflows, use `/v1/chat/completions`."
+)
+async def translate_chat(request: GeminiRequest):
+    try:
+        lease = acquire_current_gemini_lease()
+    except (GeminiClientNotInitializedError, RuntimeError) as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    try:
+        async with lease:
+            gemini_client = lease.client
+            ensure_gemini_client_ready(gemini_client)
+            validate_direct_webapi_model_name(request.model, gemini_client)
+            response = await gemini_client.generate_content(
+                request.message,
+                request.model,
+                files=request.files,
+                gem=request.gem,
+                temporary=True,
+            )
+            return {"response": response.text}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in /translate endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error during translation: {str(e)}")
-
-
-# ---------------------------------------------------------------------------
-# OpenAI-compatible streaming helpers
-# ---------------------------------------------------------------------------
-
-def _to_openai_format(response_text: str, model: str, images: list, stream: bool = False) -> dict:
-    """Build an OpenAI-compatible chat completion response dict."""
-    content = response_text
-    # Append image references as markdown if present (keeps text content useful)
-    if images:
-        md_links = "\n".join(
-            f"![{img['title']}]({img['url']})" for img in images
-        )
-        content = f"{response_text}\n\n{md_links}".strip()
-
-    result = {
-        "id": f"chatcmpl-{int(time.time())}",
-        "object": "chat.completion.chunk" if stream else "chat.completion",
-        "created": int(time.time()),
-        "model": model,
-        "choices": [
-            {
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": content,
-                },
-                "finish_reason": "stop",
+@router.post(
+    "/v1/temporary/chat/completions",
+    tags=["Chat"],
+    summary="Temporary OpenAI-Compatible Chat Completions (Deprecated)",
+    deprecated=True,
+    description=(
+        "Deprecated compatibility endpoint. New integrations must use the canonical "
+        "`/v1/stateless/chat/completions` endpoint. This endpoint remains for backward "
+        "compatibility and delegates to the same stateless Gemini WebAPI implementation "
+        "(temporary=True, so responses are not saved in Gemini history and do not write "
+        "SQLite conversation snapshots; client-owned history, `conversation_id` is rejected). "
+        "Gemini WebAPI-only; Playwright, Atlas, and non-Gemini providers are rejected. "
+        "Malformed audited OpenAI controls return HTTP 422; controls unsupported by Gemini "
+        "WebAPI return HTTP 400. streaming and non-streaming responses, file parts, and "
+        "generated artifact metadata follow the same response shape as `/v1/chat/completions`."
+    ),
+    responses={
+        200: CHAT_COMPLETIONS_RESPONSE_200,
+        400: TEMPORARY_CHAT_COMPLETIONS_RESPONSE_400,
+    },
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": TEMPORARY_CHAT_COMPLETIONS_REQUEST_EXAMPLES,
+                }
             }
-        ],
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-        },
-    }
-    # Attach raw images as a top-level extension field
-    if images:
-        result["images"] = images
-    return result
+        }
+    },
+)
+async def temporary_chat_completions(request: OpenAIChatRequest):
+    return await handle_temporary_chat_completions(request)
 
 
-async def _stream_response(response_text: str, model: str, images: list):
-    """Yield SSE chunks in OpenAI streaming format."""
-    completion_id = f"chatcmpl-{int(time.time())}"
-    created = int(time.time())
-
-    content = response_text
-    if images:
-        md_links = "\n".join(f"![{img['title']}]({img['url']})" for img in images)
-        content = f"{response_text}\n\n{md_links}".strip()
-
-    first_chunk = {
-        "id": completion_id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": model,
-        "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
-    }
-    yield f"data: {json.dumps(first_chunk)}\n\n"
-
-    content_chunk = {
-        "id": completion_id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": model,
-        "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
-    }
-    if images:
-        content_chunk["images"] = images
-    yield f"data: {json.dumps(content_chunk)}\n\n"
-
-    final_chunk = {
-        "id": completion_id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": model,
-        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-    }
-    yield f"data: {json.dumps(final_chunk)}\n\n"
-    yield "data: [DONE]\n\n"
-
-
-# ---------------------------------------------------------------------------
-# OpenAI-compatible chat completions
-# ---------------------------------------------------------------------------
-
-@router.post("/v1/chat/completions")
-async def chat_completions(request: OpenAIChatRequest):
-    """
-    OpenAI-compatible chat completion endpoint with multimodal support.
-
-    Supports:
-    - Plain text messages
-    - ``image_url`` content parts with base64 data URIs (``data:image/...;base64,...``)
-    - ``image_url`` content parts with remote HTTPS URLs (downloaded automatically)
-    - ``image_url`` content parts with ``file://`` references to uploaded file IDs
-    - ``thoughts`` field in response (thinking models)
-    - ``images`` field in response (web/generated images)
-    """
-    try:
-        gemini_client = get_gemini_client()
-    except GeminiClientNotInitializedError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-
-    is_stream = bool(request.stream)
-
-    if not request.messages:
-        raise HTTPException(status_code=400, detail="No messages provided.")
-
-    # Resolve model string → AvailableModel (dynamic; falls back to account default if unknown).
-    model_obj, extended = resolve_gemini_model(gemini_client.client, request.model)
-    model_value = model_display(model_obj) or request.model or DEFAULT_MODEL
-    # request.extended_thinking (OpenAIChatRequest) overrides any name-based detection.
-    if request.extended_thinking is not None:
-        extended = request.extended_thinking
-
-    # Auto-delete behavior for Gemini history:
-    # - If request.store is set, honor it (store=False => temporary=True)
-    # - Otherwise use config default (default: true => temporary chats)
-    auto_delete_default = CONFIG.getboolean(
-        "AI", "chat_completions_auto_delete", fallback=True
+@router.post(
+    "/v1/stateless/chat/completions",
+    tags=["Chat"],
+    summary="Stateless OpenAI-Compatible Chat Completions",
+    description=(
+        "Canonical stateless Gemini WebAPI endpoint. Client-owned-history execution: every request is "
+        "self-contained, uses temporary=True, rejects `conversation_id`, does not create SQLite conversation "
+        "snapshots, and does not persist Gemini conversation history. Gemini WebAPI only; Playwright, Atlas, "
+        "and other non-Gemini providers are not supported. Slash-containing model IDs are valid when advertised "
+        "by `/v1/stateless/models` and recognized as available by the Gemini WebAPI runtime catalog; unknown "
+        "slash IDs and non-Gemini routing IDs are rejected. Malformed request values return HTTP 422; unsupported "
+        "Gemini controls, providers, backends, and `provider_options.gemini` return HTTP 400. Buffered responses, "
+        "progressive SSE streaming, multimodal file parts, and one generated function tool call are supported. "
+        "`stream=true` with tools uses buffered OpenAI-compatible SSE replay rather than native progressive tool "
+        "streaming. `max_tokens`, `max_completion_tokens`, `reasoning_effort`, and `stream_options.include_usage` "
+        "are accepted compatibility no-ops. Direct Gemini WebAPI execution has a 300-second deadline."
+    ),
+    responses={
+        200: CHAT_COMPLETIONS_RESPONSE_200,
+        400: STATELESS_CHAT_COMPLETIONS_RESPONSE_400,
+        **STATELESS_CHAT_COMPLETIONS_ERROR_RESPONSES,
+    },
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": STATELESS_CHAT_COMPLETIONS_REQUEST_EXAMPLES,
+                }
+            }
+        }
+    },
+)
+async def stateless_chat_completions(request: OpenAIChatRequest):
+    return await handle_stateless_chat_completions(
+        request,
+        endpoint_name="stateless",
+        direct_webapi_only=True,
     )
-    if request.store is None:
-        temporary_mode = auto_delete_default
-    else:
-        temporary_mode = not bool(request.store)
 
-    # Parse all messages — collect text parts and any image file paths
-    conversation_parts: List[str] = []
-    all_file_paths: List[Path] = []
-    # Track which paths are temp files that should be cleaned up
-    temp_file_paths: List[Path] = []
 
-    for msg in request.messages:
-        role = msg.get("role", "user")
-        raw_content = msg.get("content", "")
+@router.get(
+    "/v1/stateless/models",
+    tags=["Chat"],
+    summary="List Stateless Models",
+    description=(
+        "Returns only currently available direct Gemini WebAPI models that satisfy the stateless execution contract, "
+        "including valid slash-containing model IDs when advertised by the Gemini WebAPI runtime catalog. "
+        "Playwright stateless execution is not implemented; Playwright models, legacy browser aliases, Atlas models, "
+        "and other provider models are not included."
+    ),
+)
+async def get_stateless_models():
+    return await build_stateless_model_catalog()
 
-        text, file_paths = await _extract_multimodal_content(raw_content)
 
-        # Mark newly created temp files for cleanup
-        for fp in file_paths:
-            if str(fp).startswith(str(get_temp_dir())):
-                temp_file_paths.append(fp)
-        all_file_paths.extend(file_paths)
+@router.get(
+    "/v1/models",
+    tags=["Chat"],
+    summary="List Available Models",
+    description="Returns available models from all registered providers. Includes provider-prefixed models used for discovery and routing."
+)
+async def get_models():
+    return await build_model_catalog(include_legacy_playwright_aliases=False, allow_stale=False)
 
-        if not text:
-            continue
 
-        if role == "system":
-            conversation_parts.append(f"System: {text}")
-        elif role == "user":
-            conversation_parts.append(f"User: {text}")
-        elif role == "assistant":
-            conversation_parts.append(f"Assistant: {text}")
+@router.post(
+    "/v1/chat/completions",
+    tags=["Chat"],
+    summary="OpenAI-Compatible Chat Completions",
+    description=(
+        "Primary OpenAI-compatible chat completions endpoint. Gemini WebAPI supports file content parts; file parts are request-scoped and unsupported backends reject them. "
+        "For Gemini WebAPI, text parts are concatenated into one prompt and file parts are passed as attachments, so exact text/file interleaving is not preserved. "
+        "Supported file formats are documented in docs/api.md. Audited OpenAI request controls are schema-validated, and explicitly unsupported controls return HTTP 400. "
+        "This is the recommended API for new integrations."
+    ),
+    responses={200: CHAT_COMPLETIONS_RESPONSE_200, 400: CHAT_COMPLETIONS_RESPONSE_400},
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": CHAT_COMPLETIONS_REQUEST_EXAMPLES,
+                }
+            }
+        }
+    },
+)
+async def chat_completions(request: OpenAIChatRequest, http_request: Request):
+    # Attach HTTP request_id for observability (will be used by adapter if present)
+    # The middleware sets request.state.request_id
+    if hasattr(http_request.state, "request_id"):
+        # Attach to the Pydantic model as an extra attribute (not validated).
+        # NOTE: This is for observability only and NOT part of the API contract.
+        # Clients should NOT rely on this field.
+        object.__setattr__(request, "_http_request_id", http_request.state.request_id)
 
-    if not conversation_parts:
-        raise HTTPException(status_code=400, detail="No valid messages found.")
+    # Legacy compatibility: store=False forces temporary mode (not saved in history).
+    # Preserved from pre-merge work; upstream uses a separate /v1/temporary/chat/completions endpoint.
+    if request.store is False:
+        return await handle_temporary_chat_completions(request)
 
-    final_prompt = "\n\n".join(conversation_parts)
-    files_arg = all_file_paths if all_file_paths else None
+    # Resolve provider and model name via the static factory
+    provider, resolved_model = ProviderFactory.get_provider(request)
 
-    try:
-        response = await gemini_client.generate_content(
-            message=final_prompt,
-            model=model_obj,
-            files=files_arg,
-            temporary=temporary_mode,
-            extended_thinking=extended,
-        )
+    # Update the request with the resolved model name so the provider gets the clean version
+    request.model = resolved_model
 
-        images = await serialize_response_images(
-            response, gemini_cookies=_get_cookies(gemini_client)
-        )
+    validate_openai_request_compatibility(
+        request,
+        provider.get_openai_compatibility_capabilities(request),
+    )
 
-        if is_stream:
-            return StreamingResponse(
-                _stream_response(response.text, model_value, images),
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-            )
-        return _to_openai_format(response.text, model_value, images, is_stream)
+    # Delegate implementation-heavy work to the provider
+    return await provider.chat_completions(request)
 
-    except Exception as e:
-        err_str = str(e)
-        err_lower = err_str.lower()
-        notifier = TelegramNotifier.get_instance()
-        if "auth" in err_lower or "cookie" in err_lower:
-            logger.error(f"[chat/completions] Auth error: {e}")
-            await notifier.notify_error("auth", "Authentication failed", "/v1/chat/completions", err_str)
-            raise HTTPException(status_code=401, detail=f"Gemini authentication failed: {err_str}")
-        elif "zombie" in err_lower or "parse" in err_lower or "stalled" in err_lower:
-            logger.error(f"[chat/completions] Stream error after retries (model={model_value}): {e}")
-            await notifier.notify_error("503", "Stream temporarily unavailable", "/v1/chat/completions", err_str)
-            raise HTTPException(status_code=503, detail="Gemini stream temporarily unavailable — please retry")
-        else:
-            logger.error(f"[chat/completions] Unexpected error (model={model_value}): {e}", exc_info=True)
-            await notifier.notify_error("500", "Unexpected error", "/v1/chat/completions", err_str)
-            raise HTTPException(status_code=500, detail=f"Error processing chat completion: {err_str}")
 
-    finally:
-        # Clean up temp files created from base64/URL image inputs
-        cleanup_temp_files(temp_file_paths)
+@router.get(
+    "/v1/conversations",
+    tags=["Chat"],
+    summary="List Gemini WebAPI Conversations",
+    description="Lists locally persisted Gemini WebAPI conversations stored in SQLite. Playwright and Atlas conversations are not included."
+)
+async def list_conversations():
+    provider, _ = ProviderFactory.get_provider(
+        OpenAIChatRequest(messages=[], provider="gemini")
+    )
+    list_handler = getattr(provider, "list_conversations", None)
+    if list_handler is None:
+        raise HTTPException(status_code=400, detail="Conversation listing is not supported for this provider.")
+    return await list_handler()
+
+
+@router.delete(
+    "/v1/conversations",
+    tags=["Chat"],
+    summary="Bulk Delete Gemini WebAPI Conversations",
+    description="Deletes all locally persisted Gemini WebAPI conversations. Playwright and Atlas conversations are not supported."
+)
+async def delete_conversations():
+    provider, _ = ProviderFactory.get_provider(
+        OpenAIChatRequest(messages=[], provider="gemini")
+    )
+    delete_handler = getattr(provider, "delete_conversations", None)
+    if delete_handler is None:
+        raise HTTPException(status_code=400, detail="Bulk conversation deletion is not supported for this provider.")
+    return await delete_handler()
+
+
+@router.delete(
+    "/v1/conversations/{conversation_id}",
+    tags=["Chat"],
+    summary="Delete Gemini WebAPI Conversation",
+    description="Deletes a Gemini WebAPI conversation by local conversation_id. Playwright and Atlas conversations are not supported."
+)
+async def delete_conversation(conversation_id: str):
+    provider, _ = ProviderFactory.get_provider(
+        OpenAIChatRequest(messages=[], provider="gemini")
+    )
+    delete_handler = getattr(provider, "delete_conversation", None)
+    if delete_handler is None:
+        raise HTTPException(status_code=400, detail="Conversation deletion is not supported for this provider.")
+    return await delete_handler(conversation_id)

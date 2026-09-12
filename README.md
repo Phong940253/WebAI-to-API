@@ -1,179 +1,242 @@
-> **This project is intended for research and educational purposes only.**
-> Please use it responsibly and refrain from any commercial use.
-
 # WebAI-to-API
 
-A FastAPI server that exposes Google Gemini (via browser cookies) as a local OpenAI-compatible API endpoint. No API key required — it reuses your existing browser session.
+<p align="center">
+  <img src="./assets/Server-Run-WebAI.png" alt="WebAI-to-API Server" height="160" />
+  <img src="./assets/Dashboard.png" alt="Dashboard" height="160" />
+</p>
 
-Compatible with any tool that supports the OpenAI API format: [Open WebUI](https://github.com/open-webui/open-webui), [Cursor](https://cursor.sh), [Continue](https://continue.dev), custom scripts, etc.
-
-![1771806187019](assets/1771806187019.png)
+**WebAI-to-API** is a browser-native AI runtime that exposes browser-based AI services through OpenAI-compatible APIs.
 
 ---
 
-## Deploy with Docker Compose
+## Features
 
-### 1. Create a folder and add two files
+* OpenAI-compatible `/v1/chat/completions` API
+* Provider-based architecture with unified routing
+* Streaming response support (SSE)
+* Conversation continuation support
+* Health, readiness, and runtime diagnostics endpoints
+* Docker deployment support
+* Authentication management and browser login workflows
 
-**`docker-compose.yml`**
+---
 
-```yaml
-services:
-  web_ai:
-    image: ghcr.io/leolionart/webai-to-api:latest
-    container_name: web_ai_server
-    restart: always
-    ports:
-      - "6969:6969"
-    environment:
-      - PYTHONPATH=/app/src
-      - CONFIG_PATH=/app/data/config.conf
-    volumes:
-      - ./config.conf:/app/data/config.conf
-    command: uvicorn app.main:app --host 0.0.0.0 --port 6969 --workers 1 --log-level info
+## Available Providers
+
+### Gemini
+
+Provides access to Google Gemini models through either the WebAPI backend or a browser-native Playwright runtime.
+
+---
+
+## Quick Start
+
+**Prerequisites:** Git, Python `>=3.11,<3.13` and Poetry. On Windows, use Python `3.11.10+` or `3.12.4+` for secure Gemini WebAPI temporary-cookie-cache handling. See the [Installation Guide](docs/installation.md) for full installation and troubleshooting details.
+
+### 1. Install and Set Up
+
+Clone the repository, enter the project directory, then run the setup wrapper for your platform.
+
+**Linux / macOS**
+
+```bash
+git clone https://github.com/Amm1rr/WebAI-to-API.git
+cd WebAI-to-API
+./install.sh
 ```
 
-**`config.conf`** (leave cookies empty for now)
+**Windows PowerShell**
+```
+git clone https://github.com/Amm1rr/WebAI-to-API.git
+cd WebAI-to-API
+.\install.ps1
+```
+
+The wrappers create missing configuration and runtime state, install project dependencies and Playwright Chromium, then run diagnostics. See the [Installation Guide](docs/installation.md) for manual setup, troubleshooting, and Make shortcuts.
+
+### 2. Configure
+
+Review the generated `config.conf`. Core Gemini settings include:
 
 ```ini
-[Browser]
-name = chrome
-
-[AI]
-default_ai = gemini
-default_model_gemini = gemini-flash
-
-[Cookies]
-gemini_cookie_1psid   =
-gemini_cookie_1psidts =
-
-[EnabledAI]
-gemini = true
-
-[Proxy]
-http_proxy =
+[Gemini]
+backend = webapi
+default_model = gemini-3-flash
+extended_thinking = false
 ```
 
-### 2. Start the server
+See the [Configuration Guide](docs/configuration.md) for provider, proxy, logging, and authentication settings.
+
+### 3. Authenticate
+
+For browser-based Gemini authentication:
 
 ```bash
-docker compose up -d
+poetry run python verify_login.py
 ```
 
-### 3. Open the admin dashboard
+Gemini WebAPI can also use configured cookies. See the [Configuration Guide](docs/configuration.md) for authentication methods. For Docker authentication, see the [Docker Deployment Guide](docs/docker.md).
 
-Go to **`http://localhost:6969/admin`**
+### 4. Start the Server
 
-From there, paste your Gemini cookies and click **Connect** — no file editing needed.
+```bash
+poetry run python src/run.py
+```
+
+* API: `http://localhost:6969`
+* Dashboard: `http://localhost:6969/ui`
+* Swagger UI: `http://localhost:6969/docs`
 
 ---
 
-## Getting Gemini cookies
+## Updating
 
-1. Open [gemini.google.com](https://gemini.google.com) and log in
-2. Open DevTools (`F12`) → **Network** tab → refresh the page → click any request to `gemini.google.com`
-3. Right-click the request → **Copy → Copy as cURL**
-4. Paste the cURL command into the admin dashboard — it extracts the cookies automatically
+### Host
 
-Or manually: DevTools → **Application** → **Cookies** → copy `__Secure-1PSID` and `__Secure-1PSIDTS`.
+**Linux / macOS**
+```bash
+./update-linux-macos.sh
+```
 
-Cookies are saved to `config.conf` in your folder and auto-rotated in the background — no manual refresh needed.
+**Windows**
+```cmd
+update-windows.cmd
+```
+
+Updates are version-driven from `origin/master`. See the [Updater Guide](docs/updating.md) for locking, preflight checks, rollback, dependency sync, and platform details.
+
+### Docker
+
+```bash
+git pull
+APP_UID=$(id -u) APP_GID=$(id -g) docker compose up -d --build
+```
+
+See the [Docker Deployment Guide](docs/docker.md) for Docker setup and deployment details.
 
 ---
 
-## Using the API
-
-The server exposes an OpenAI-compatible endpoint. Point any compatible tool to:
-
-```
-Base URL: http://localhost:6969/v1
-API Key:  not-needed
-```
-
-### Supported models
-
-Models are discovered dynamically per account at runtime (via `gemini-webapi` >= 2.0).
-The default model used is `gemini-flash`. Common discovered names include:
-
-| Model             | Description                             |
-| ----------------- | --------------------------------------- |
-| `gemini-pro`      | Most capable (requires Gemini Advanced) |
-| `gemini-flash`    | Fast, efficient (default)               |
-| `gemini-flash-lite` | Lightweight variant                   |
-
-Extended thinking is enabled by appending `thinking` to a model name (e.g. `gemini-pro-thinking`)
-or by sending `extended_thinking: true` (OpenAI /chat/completions requests). Names sent by clients
-that don't match a discovered model are resolved to the closest match, or fall back to the
-account default — so legacy/variant names keep working.
-
-### Example: curl
+## Send Your First Request
 
 ```bash
-curl http://localhost:6969/v1/chat/completions \
+curl -X POST http://localhost:6969/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemini-flash",
-    "messages": [{ "role": "user", "content": "Hello!" }],
-    "store": false
+    "model": "gemini-3-flash",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello!"
+      }
+    ]
   }'
 ```
 
-### Example: OpenAI Python client
+---
 
-```python
-from openai import OpenAI
+## Dashboard
 
-client = OpenAI(
-    base_url="http://localhost:6969/v1",
-    api_key="not-needed",
-)
-
-response = client.chat.completions.create(
-    model="gemini-flash",
-    messages=[{"role": "user", "content": "Hello!"}],
-  store=False,
-)
-print(response.choices[0].message.content)
-```
-
-`/v1/chat/completions` supports the OpenAI-style `store` flag:
-- `store: false` -> temporary chat (auto-delete / not saved in Gemini history)
-- `store: true` -> allow storing in Gemini history
-
-If `store` is omitted, server default is controlled by `AI.chat_completions_auto_delete`
-in `config.conf` (default: `true`).
+Open the dashboard at `http://localhost:6969/ui`. It provides runtime status, authentication view, model and API discovery, a playground, and conversation management where supported. See the [Dashboard Guide](docs/dashboard.md).
 
 ---
 
-## Endpoints
+## Main Endpoints
 
-| Method | Path                   | Description                                                     |
-| ------ | ---------------------- | --------------------------------------------------------------- |
-| `GET`  | `/v1/models`           | List available models                                           |
-| `POST` | `/v1/chat/completions` | OpenAI-compatible chat (streaming supported, `store` supported) |
-| `POST` | `/gemini`              | Stateless single-turn request                                   |
-| `POST` | `/gemini-chat`         | Stateful multi-turn chat                                        |
-| `POST` | `/translate`           | Translation (alias for `/gemini-chat`)                          |
-| `GET`  | `/admin`               | Admin dashboard                                                 |
-| `GET`  | `/docs`                | Swagger UI                                                      |
+| Endpoint | Purpose |
+| --- | --- |
+| `/v1/chat/completions` | Main OpenAI-compatible chat endpoint |
+| `/v1/stateless/chat/completions` | Canonical client-owned-history Gemini WebAPI chat endpoint |
+| `/v1/stateless/models` | Direct Gemini WebAPI models valid for stateless chat (including valid slash-containing IDs) |
+| `/v1/temporary/chat/completions` | Deprecated temporary compatibility endpoint (delegates to stateless) |
+| `/v1/models` | Current runtime model catalog |
+| `/v1/conversations` | Manage persisted Gemini WebAPI conversations |
+| `/v1/auth/status` | Authentication status |
+| `/v1/auth/login` | Interactive browser login trigger |
+| `/v1/runtime/status` | Runtime diagnostics |
+| `/health` | Liveness |
+| `/ready` | Runtime readiness |
+| `/translate` | Translate It! compatibility endpoint |
+| `/ui` | Dashboard |
+
+See [API Documentation](docs/api.md) for the complete API surface, including compatibility and legacy endpoints.
 
 ---
 
-## Common commands
+## Hermes / Stateless API
 
-```bash
-docker compose up -d          # start
-docker compose down           # stop
-docker compose logs -f        # live logs
-docker compose pull && docker compose up -d   # update to latest
+Hermes Agent and other client-owned-history clients can use the canonical stateless endpoint:
+
+```text
+http://127.0.0.1:6969/v1/stateless
 ```
+
+Append `/models` for discovery or `/chat/completions` for requests:
+
+```text
+GET  /models
+POST /chat/completions
+```
+
+This surface uses direct Gemini WebAPI execution only (`temporary=True`, no `conversation_id`, no SQLite snapshots, client owns and resends all history). Slash-containing model IDs are valid when advertised by the Gemini WebAPI runtime catalog. Streaming and tool calling are supported. The legacy `/v1/temporary/chat/completions` endpoint remains as a deprecated compatibility wrapper that delegates to the same implementation. See the [API Documentation](docs/api.md#stateless-chat-api) and [Stateless Chat Contract](docs/specs/stateless-chat-contract.md).
+
+---
+
+## Supported Models and Routing
+
+Available models depend on configured providers and runtime availability. Use `/v1/models` as the authoritative current catalog.
+
+```text
+gemini-3-flash
+playwright/gemini-3-flash
+```
+
+Unprefixed Gemini models use the configured Gemini backend. `playwright/...` forces browser-native Gemini routing, while `atlas/...` routes to Atlas. See [API Documentation](docs/api.md) for full routing behavior.
+
+---
+
+## Configuration Summary
+
+Configure Gemini backend selection (`webapi` or `playwright`), default model, provider enablement, proxy, logging, and Atlas API access in `config.conf` and `.env`. Set a default for Extended Thinking with `[Gemini].extended_thinking`, or override it per request with `provider_options.gemini.extended_thinking`. See the [Configuration Guide](docs/configuration.md).
+
+---
+
+## File Support
+
+OpenAI-style file content parts are supported by Gemini WebAPI. Gemini Playwright and Atlas do not currently support file parts, and Gemini WebAPI does not preserve exact text/file interleaving. See [API Documentation](docs/api.md) for supported formats and limits.
+
+---
+
+## Security
+
+WebAI-to-API does not provide caller API authentication. Keep the default localhost binding unless external authentication and access control protect the service. See the [Docker Deployment Guide](docs/docker.md) and [Dashboard Guide](docs/dashboard.md).
+
+---
+
+## Documentation
+
+* [Installation Guide](docs/installation.md)
+* [API Documentation](docs/api.md)
+* [Configuration Guide](docs/configuration.md)
+* [Architecture Guide](docs/architecture.md)
+* [Docker Deployment Guide](docs/docker.md)
+* [Dashboard Guide](docs/dashboard.md)
+* [Updater Guide](docs/updating.md)
+
+Interactive API documentation is available through Swagger UI when the server is running.
 
 ---
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Amm1rr/WebAI-to-API&type=Date)](https://www.star-history.com/#Amm1rr/WebAI-to-API&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=Amm1rr/WebAI-to-API\&type=Date)](https://star-history.dera.page/#Amm1rr/WebAI-to-API&Date)
+
+---
 
 ## License
 
-[MIT License](LICENSE)
+WebAI-to-API is licensed under the MIT License. See [LICENSE](LICENSE) for the full text.
+
+
+<br>
+
+[![](https://visitcount.itsvg.in/api?id=amm1rr\&label=V\&color=0\&icon=2\&pretty=true)](https://github.com/Amm1rr/)

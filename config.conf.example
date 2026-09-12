@@ -1,57 +1,65 @@
 # Configuration File for WebAI-to-API Server
 # -------------------------------------------
 # ⚠️ Note: This file is *only* used by the WebAI-to-API server.
-# It is NOT intended for use with gpt4free providers.
+
+# --- General Settings ---
+# Check origin/master for a newer project version after server startup.
+# This only logs a notification; it never updates automatically.
+[General]
+check_updates = true
 
 # --- Browser Settings ---
-# Set the browser that will be used for any required operations.
-# Only modify this section in most use cases.
-# Supported options: chrome, firefox, brave, edge, safari
+# name: Host browser used for local cookie discovery (chrome, firefox, brave, edge, safari).
+#       This does NOT select the browser automation runtime.
+# runtime: Browser automation runtime backend.
+#       Supported options: playwright
 [Browser]
 name = chrome
+runtime = playwright
 
-# --- AI Provider Settings ---
-# Select the default AI service.
-# Currently supported: gemini
-[AI]
-default_ai = gemini
+# --- Authentication Methods ---
+# WebAI-to-API supports multiple authentication approaches:
+#
+# 1. MANUAL COOKIES (Gemini WebAPI):
+#    - Add __Secure-1PSID and __Secure-1PSIDTS below
+#    - Works immediately, no browser required
+#
+# 2. BROWSER LOGIN (Playwright):
+#    - Run: poetry run python verify_login.py (on HOST machine, not in Docker)
+#    - Creates runtime/auth/gemini.json with authentication state
+#    - Docker container automatically consumes this file
+#    - Required for: playwright/* model requests
+#
+# For Docker + Playwright deployments: Use Method 2 (verify_login.py)
 
-# --- Gemini Model Configuration ---
-# Choose the model to be used when Gemini is selected as the AI.
-# Models are discovered dynamically per account at runtime (gemini-webapi >= 2.0).
-# The value below is used as the default; any name the client sends is resolved
-# at request time and falls back to the account default if unknown.
-# Common discovered names:
-# - gemini-pro            (most capable, requires Gemini Advanced)
-# - gemini-flash          (fast, default)
-# - gemini-flash-lite     (lightweight)
-# Enable extended thinking by appending "thinking" to the model name, or by
-# sending extended_thinking=true (OpenAI /chat/completions requests).
-default_model_gemini = gemini-flash
-# chat_timeout_seconds: max seconds to wait for one chat response before reset/retry
-# chat_retry_attempts: how many extra attempts to retry after timeout/transient parser errors
-# chat_retry_delay_seconds: delay between retries
-chat_timeout_seconds = 45
-chat_retry_attempts = 1
-chat_retry_delay_seconds = 2
-# chat_lock_wait_seconds: max time to wait for the session lock before returning busy
-# chat_timeout_fallback_stateless: on chat timeout, fallback to a stateless /gemini-style call
-chat_lock_wait_seconds = 12
-chat_timeout_fallback_stateless = true
-# chat_session_max_turns: rotate stateful chat session after N successful turns
-# chat_skip_html_only_chunks: skip model call for chunks containing only tags and no visible text
-chat_session_max_turns = 6
-chat_skip_html_only_chunks = true
-# chat_completions_auto_delete: when true, /v1/chat/completions uses temporary mode
-# (conversation is not saved to Gemini history). Clients can override per request with
-# "store": true/false.
-chat_completions_auto_delete = true
+# --- Gemini Configuration ---
+# Configure the Google Gemini provider.
+#
+# Execution Strategy:
+# - webapi:    Lightweight, fast, uses unofficial API wrappers.
+# - playwright: Browser-native runtime (Chromium). Most resilient.
+# NOTE: Using a 'playwright/...' model prefix in your request will
+# automatically override this global backend configuration.
+#
+# Default Model:
+# Choose the model to be used when none is specified in the request.
+# Default Gemini model. Runtime availability is discovered from the current account.
+#
+# Optional manual Gemini WebAPI authentication.
+# Prefer browser login which stores auth state in runtime/auth/gemini.json.
+# __Secure-1PSID is required; __Secure-1PSIDTS is optional.
+[Gemini]
+backend = webapi
+default_model = gemini-3-flash
+extended_thinking = false
+__Secure-1PSID =
+__Secure-1PSIDTS =
 
-# --- Gemini Cookies ---
-# Provide your authentication cookies for Gemini here.
-# You can either paste them manually or log in via browser to generate them.
+# --- Legacy Cookie Support (DEPRECATED) ---
+# For backward compatibility only. Please migrate to [Gemini] section.
+# __Secure-1PSID is required; __Secure-1PSIDTS is optional in legacy format.
 [Cookies]
-gemini_cookie_1psid = 
+gemini_cookie_1psid =
 gemini_cookie_1psidts = 
 
 # --- AI Services Toggle ---
@@ -60,21 +68,83 @@ gemini_cookie_1psidts =
 [EnabledAI]
 gemini = true
 
+# --- Atlas Cloud Configuration ---
+# API key and endpoint for the Atlas Cloud provider.
+#
+# Precedence Order:
+# OS Env > .env.local > .env > config.conf > defaults
+#
+# NOTE: For production, Docker, or CI/CD deployments, it is highly 
+# recommended to use environment variables (ATLASCLOUD_API_KEY, 
+# ATLASCLOUD_BASE_URL) rather than committing secrets to this file.
+[Atlas]
+api_key = 
+base_url = https://api.atlascloud.ai/v1
+
 # --- Proxy Configuration ---
 # The app, use this proxy to connect gemini servers.
 # Its usefull to fix errors like 403 or restricted connections
 # Example: http_proxy = http://127.0.0.1:2334
 [Proxy]
-http_proxy =
+http_proxy = 
 
-# --- Telegram Notifications ---
+# --- Playwright Settings ---
+# Settings for the browser automation engine.
+[Playwright]
+# Run in headless mode (true/false)
+# Note: Set to false for verify_login.py interactive login
+# Docker containers use PLAYWRIGHT_HEADLESS=true environment variable
+headless = false
+
+# Provider browser storage state directory. Default: RUNTIME_DIR/auth.
+# Set auth_state_dir only to use a separate directory; AUTH_STATE_DIR overrides it.
+# verify_login.py creates gemini.json in the resolved directory.
+
+# Concurrency locking backend for on-demand authentication coordination.
+# Default: in_memory (process-bound). Swapping this is required for production
+# multi-worker/Gunicorn or horizontally scaled SaaS deployments to avoid races.
+# Supported future values: redis, postgres.
+auth_lock_backend = in_memory
+
+# =====================================================================
+# --- Advanced Playwright Engine Tuning ---
+# ⚠️ Only modify these if you understand the runtime architecture.
+# =====================================================================
+
+# -- Capacity Limits --
+# Maximum concurrent pages across all sessions (HARD LIMIT via semaphore)
+max_concurrent_pages = 5
+
+# Global soft-cap for total open pages across all sessions (eviction threshold)
+max_total_tabs = 50
+
+# Maximum conversations to keep in the LRU registry per provider
+max_persistent_conversations = 20
+
+# -- Timeouts (Milliseconds) --
+# Passed directly to Playwright underlying APIs.
+navigation_timeout = 30000
+ui_wait_timeout = 15000
+
+# -- Timeouts (Seconds) --
+# Used by Python asyncio layer for application-level lifecycle management.
+chunk_timeout = 90
+total_request_timeout = 120
+idle_conversation_timeout = 900
+lease_timeout = 180
+
+# --- Logging Settings ---
+# Configure server log output and verbosity.
+# Precedence: CLI Arg > OS Env > config.conf > Default
+[Logging]
+# Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+level = INFO
+# Set to true to disable Uvicorn HTTP access logging
+disable_access_logs = false
+
+# --- Telegram Notifications (legacy, preserved from pre-merge work) ---
 # Send alerts to a Telegram chat when API errors occur (auth failures, 5xx errors).
-# How to set up:
-#   1. Message @BotFather on Telegram → /newbot → copy the token
-#   2. Add the bot to your group/channel, or use a personal chat
-#   3. Get your chat_id: message the bot, then visit
-#      https://api.telegram.org/bot<TOKEN>/getUpdates
-# cooldown_seconds: minimum gap (seconds) between alerts of the same type (default 60)
+# Not wired into the new provider runtime yet; kept for backward compatibility.
 [Telegram]
 enabled = false
 bot_token =
