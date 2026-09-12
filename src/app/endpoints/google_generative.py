@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from app.logger import logger
 from schemas.request import GoogleGenerativeRequest
 from app.services.gemini_client import get_gemini_client, GeminiClientNotInitializedError
+from app.services.model_resolver import resolve_gemini_model
 
 router = APIRouter()
 
@@ -25,8 +26,11 @@ async def google_generative_generate(model: str, request: GoogleGenerativeReques
                     for part in content.parts:
                         prompt += part.text
 
+        # Resolve the requested model dynamically; fall back to the account default if unknown.
+        model_obj, _ = resolve_gemini_model(gemini_client.client, model[0])
+
         # Call the gemini_client with the extracted prompt
-        response = await gemini_client.generate_content(prompt, model[0])
+        response = await gemini_client.generate_content(prompt, model=model_obj)
 
         # Format the response to match the Google Generative AI API format
         google_response = {

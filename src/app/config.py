@@ -71,7 +71,7 @@ def load_config(config_file: str = None) -> configparser.ConfigParser:
     if "Cookies" not in config:
         config["Cookies"] = {}
     if "AI" not in config:
-        config["AI"] = {"default_model_gemini": "gemini-3-flash"}
+        config["AI"] = {"default_model_gemini": "gemini-flash"}
     if "chat_completions_auto_delete" not in config["AI"]:
         # True = /v1/chat/completions runs in temporary mode by default.
         config["AI"]["chat_completions_auto_delete"] = "true"

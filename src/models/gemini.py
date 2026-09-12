@@ -28,25 +28,36 @@ class MyGeminiClient:
     async def generate_content(
         self,
         message: str,
-        model: str,
+        model=None,
         files: Optional[List[Union[str, Path]]] = None,
         temporary: Optional[bool] = None,
+        extended_thinking: bool = False,
     ):
         """
         Generate content with automatic retry on transient errors.
         gemini-webapi reinitializes its session after zombie/parse errors
         (~2-3 s); retrying after that window succeeds in most cases.
+
+        `model` may be an `AvailableModel`, a model name string, or `None`
+        (let Google use the account default). `extended_thinking` enables the
+        thinking mode (2.0+ flag, no separate "thinking" model).
         """
         last_exc: Exception | None = None
         for attempt in range(_MAX_RETRIES + 1):
             try:
                 if temporary is None:
-                    return await self.client.generate_content(message, model=model, files=files)
+                    return await self.client.generate_content(
+                        message,
+                        model=model,
+                        files=files,
+                        extended_thinking=extended_thinking,
+                    )
                 return await self.client.generate_content(
                     message,
                     model=model,
                     files=files,
                     temporary=temporary,
+                    extended_thinking=extended_thinking,
                 )
             except Exception as e:
                 last_exc = e
@@ -68,8 +79,11 @@ class MyGeminiClient:
         """Close the Gemini client."""
         await self.client.close()
 
-    def start_chat(self, model: str):
+    def start_chat(self, model=None):
         """
         Start a chat session with the given model.
+
+        `model` may be an `AvailableModel`, a model name string, or `None`
+        (account default).
         """
         return self.client.start_chat(model=model)

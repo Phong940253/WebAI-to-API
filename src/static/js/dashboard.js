@@ -43,11 +43,11 @@ const CURL_EXAMPLES = [
     {
         id: "chat",
         label: "💬 Chat",
-        desc: "Dùng cho mọi client OpenAI-compatible: Home Assistant, n8n, LangChain... Đổi <code>model</code> thành <code>gemini-3.0-pro</code> hoặc <code>gemini-3.0-flash-thinking</code> nếu cần.",
+        desc: "Dùng cho mọi client OpenAI-compatible: Home Assistant, n8n, LangChain... Đổi <code>model</code> thành <code>gemini-pro</code> hoặc bật <code>extended_thinking</code> nếu cần suy luận sâu.",
         curl: (base) => `curl -X POST ${base}/v1/chat/completions \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "gemini-3.0-flash",
+    "model": "gemini-flash",
     "messages": [
       {"role": "user", "content": "Xin chào!"}
     ]
@@ -61,7 +61,7 @@ const CURL_EXAMPLES = [
 curl -X POST ${base}/v1/chat/completions \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "gemini-3.0-flash",
+    "model": "gemini-flash",
     "messages": [{
       "role": "user",
       "content": [
@@ -81,7 +81,7 @@ curl -X POST ${base}/v1/chat/completions \\
         curl: (base) => `curl -X POST ${base}/gemini \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "gemini-3.0-flash",
+    "model": "gemini-flash",
     "message": "Vẽ một bức tranh hoàng hôn trên biển"
   }'`,
     },
@@ -93,7 +93,7 @@ curl -X POST ${base}/v1/chat/completions \\
             "Cài <strong>Local OpenAI LLM</strong> qua HACS: thêm custom repo <code>https://github.com/skye-harris/hass_local_openai_llm</code> → chọn <em>Integration</em> → Install.",
             "Vào <em>Settings → Devices &amp; Services → Add Integration</em>, tìm <strong>Local OpenAI LLM</strong>.",
             "Điền <strong>Server URL</strong>: <code>" + location.origin + "/v1</code> &nbsp;·&nbsp; <strong>API Key</strong>: để trống.",
-            "Chọn <strong>Model</strong> từ dropdown — HA tự query <code>/v1/models</code> và hiện danh sách: <code>gemini-3.0-flash</code>, <code>gemini-3.0-pro</code>, <code>gemini-3.0-flash-thinking</code>.",
+            "Chọn <strong>Model</strong> từ dropdown — HA tự query <code>/v1/models</code> và hiện danh sách: <code>gemini-flash</code>, <code>gemini-pro</code>, <code>gemini-pro</code> (bật extended thinking).",
             "<strong>Chat / Assist:</strong> tạo subentry <em>Conversation Agent</em> → chọn model vừa cấu hình.",
             "<strong>Phân tích ảnh camera:</strong> tạo subentry <em>AI Task Agent</em> → HA tự gửi ảnh qua <code>/v1/chat/completions</code>, không cần cấu hình thêm.",
         ],

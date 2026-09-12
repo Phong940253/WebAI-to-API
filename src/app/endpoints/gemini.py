@@ -10,35 +10,13 @@ from fastapi import APIRouter, HTTPException
 from app.config import CONFIG
 from app.logger import logger
 from app.services.gemini_client import GeminiClientNotInitializedError, get_gemini_client
+from app.services.model_resolver import resolve_gemini_model
 from app.services.telegram_notifier import TelegramNotifier
 from app.services.session_manager import SessionBusyError, get_gemini_chat_manager
 from app.utils.image_utils import cleanup_temp_files, serialize_response_images
 from schemas.request import GeminiRequest
 
 router = APIRouter()
-
-_MODEL_ALIASES: dict[str, str] = {
-    "gemini-3.0-pro": "gemini-3-pro",
-    "gemini-3.0-flash": "gemini-3-flash",
-    "gemini-3.0-flash-thinking": "gemini-3-flash-thinking",
-}
-
-
-def _resolve_model_name(model: Optional[str]) -> str:
-    """Map legacy/variant model names to a supported Gemini 3 model."""
-    if not model:
-        return "gemini-3-flash"
-
-    lower = model.strip().lower()
-    if lower in _MODEL_ALIASES:
-        return _MODEL_ALIASES[lower]
-    if "thinking" in lower:
-        return "gemini-3-flash-thinking"
-    if "pro" in lower:
-        return "gemini-3-pro"
-    if "flash" in lower:
-        return "gemini-3-flash"
-    return "gemini-3-flash"
 
 
 def _get_cookies(gemini_client) -> dict:
@@ -80,11 +58,16 @@ async def gemini_generate(request: GeminiRequest):
         raise HTTPException(status_code=503, detail=str(e))
 
     file_paths: List[Path] = [Path(f) for f in request.files] if request.files else []
-    model_value = _resolve_model_name(request.model)
+    model_obj, extended = resolve_gemini_model(gemini_client.client, request.model)
+    extended = extended or request.extended_thinking
+    model_value = request.model or "gemini-flash"
 
     try:
         response = await gemini_client.generate_content(
-            request.message, model_value, files=file_paths or None
+            request.message,
+            model=model_obj,
+            files=file_paths or None,
+            extended_thinking=extended,
         )
 
         images = await serialize_response_images(response, gemini_cookies=_get_cookies(gemini_client))
@@ -127,7 +110,9 @@ async def gemini_chat(request: GeminiRequest):
     if not session_manager:
         raise HTTPException(status_code=503, detail="Session manager is not initialized.")
 
-    model_value = _resolve_model_name(request.model)
+    model_obj, extended = resolve_gemini_model(gemini_client.client, request.model)
+    extended = extended or request.extended_thinking
+    model_value = request.model or "gemini-flash"
     image_count = len(request.files or [])
     logger.info(
         f"/gemini-chat request started (model={model_value}, has_message={bool(request.message)}, files={image_count})."
@@ -144,7 +129,12 @@ async def gemini_chat(request: GeminiRequest):
 
     try:
         started_at = time.perf_counter()
-        response = await session_manager.get_response(model_value, request.message, request.files)
+        response = await session_manager.get_response(
+            model_obj,
+            request.message,
+            request.files,
+            extended_thinking=extended,
+        )
         elapsed = time.perf_counter() - started_at
         logger.info(f"/gemini-chat request completed in {elapsed:.2f}s (model={model_value}).")
 
@@ -176,8 +166,9 @@ async def gemini_chat(request: GeminiRequest):
             file_paths: List[Path] = [Path(f) for f in request.files] if request.files else []
             fallback_response = await gemini_client.generate_content(
                 request.message,
-                model_value,
+                model=model_obj,
                 files=file_paths or None,
+                extended_thinking=extended,
             )
             images = await serialize_response_images(
                 fallback_response,

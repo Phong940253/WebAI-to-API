@@ -18,11 +18,34 @@ default_ai = gemini
 
 # --- Gemini Model Configuration ---
 # Choose the model to be used when Gemini is selected as the AI.
-# Available models:
-# - gemini-3.0-pro            (most capable, requires Gemini Advanced)
-# - gemini-3.0-flash          (fast, default)
-# - gemini-3.0-flash-thinking (with extended thinking)
-default_model_gemini = gemini-3.0-flash
+# Models are discovered dynamically per account at runtime (gemini-webapi >= 2.0).
+# The value below is used as the default; any name the client sends is resolved
+# at request time and falls back to the account default if unknown.
+# Common discovered names:
+# - gemini-pro            (most capable, requires Gemini Advanced)
+# - gemini-flash          (fast, default)
+# - gemini-flash-lite     (lightweight)
+# Enable extended thinking by appending "thinking" to the model name, or by
+# sending extended_thinking=true (OpenAI /chat/completions requests).
+default_model_gemini = gemini-flash
+# chat_timeout_seconds: max seconds to wait for one chat response before reset/retry
+# chat_retry_attempts: how many extra attempts to retry after timeout/transient parser errors
+# chat_retry_delay_seconds: delay between retries
+chat_timeout_seconds = 45
+chat_retry_attempts = 1
+chat_retry_delay_seconds = 2
+# chat_lock_wait_seconds: max time to wait for the session lock before returning busy
+# chat_timeout_fallback_stateless: on chat timeout, fallback to a stateless /gemini-style call
+chat_lock_wait_seconds = 12
+chat_timeout_fallback_stateless = true
+# chat_session_max_turns: rotate stateful chat session after N successful turns
+# chat_skip_html_only_chunks: skip model call for chunks containing only tags and no visible text
+chat_session_max_turns = 6
+chat_skip_html_only_chunks = true
+# chat_completions_auto_delete: when true, /v1/chat/completions uses temporary mode
+# (conversation is not saved to Gemini history). Clients can override per request with
+# "store": true/false.
+chat_completions_auto_delete = true
 
 # --- Gemini Cookies ---
 # Provide your authentication cookies for Gemini here.

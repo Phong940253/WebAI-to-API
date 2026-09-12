@@ -41,7 +41,7 @@ name = chrome
 
 [AI]
 default_ai = gemini
-default_model_gemini = gemini-3.0-flash
+default_model_gemini = gemini-flash
 
 [Cookies]
 gemini_cookie_1psid   =
@@ -92,11 +92,19 @@ API Key:  not-needed
 
 ### Supported models
 
-| Model                       | Description                             |
-| --------------------------- | --------------------------------------- |
-| `gemini-3.0-pro`            | Most capable (requires Gemini Advanced) |
-| `gemini-3.0-flash`          | Fast, efficient (default)               |
-| `gemini-3.0-flash-thinking` | Extended thinking                       |
+Models are discovered dynamically per account at runtime (via `gemini-webapi` >= 2.0).
+The default model used is `gemini-flash`. Common discovered names include:
+
+| Model             | Description                             |
+| ----------------- | --------------------------------------- |
+| `gemini-pro`      | Most capable (requires Gemini Advanced) |
+| `gemini-flash`    | Fast, efficient (default)               |
+| `gemini-flash-lite` | Lightweight variant                   |
+
+Extended thinking is enabled by appending `thinking` to a model name (e.g. `gemini-pro-thinking`)
+or by sending `extended_thinking: true` (OpenAI /chat/completions requests). Names sent by clients
+that don't match a discovered model are resolved to the closest match, or fall back to the
+account default — so legacy/variant names keep working.
 
 ### Example: curl
 
@@ -104,7 +112,7 @@ API Key:  not-needed
 curl http://localhost:6969/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemini-3.0-flash",
+    "model": "gemini-flash",
     "messages": [{ "role": "user", "content": "Hello!" }],
     "store": false
   }'
@@ -121,7 +129,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="gemini-3.0-flash",
+    model="gemini-flash",
     messages=[{"role": "user", "content": "Hello!"}],
   store=False,
 )

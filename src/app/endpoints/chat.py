@@ -10,6 +10,11 @@ from fastapi.responses import StreamingResponse
 from app.config import CONFIG
 from app.logger import logger
 from app.services.gemini_client import GeminiClientNotInitializedError, get_gemini_client
+from app.services.model_resolver import (
+    FALLBACK_MODELS,
+    model_display,
+    resolve_gemini_model,
+)
 from app.services.telegram_notifier import TelegramNotifier
 from app.services.session_manager import get_translate_session_manager
 from app.utils.image_utils import (
@@ -19,77 +24,9 @@ from app.utils.image_utils import (
     get_temp_dir,
     serialize_response_images,
 )
-from schemas.request import GeminiModels, GeminiRequest, OpenAIChatRequest
+from schemas.request import DEFAULT_MODEL, GeminiRequest, OpenAIChatRequest
 
 router = APIRouter()
-
-
-# ---------------------------------------------------------------------------
-# Model resolution — map any string to a valid GeminiModels value
-# ---------------------------------------------------------------------------
-
-# Explicit aliases: covers Home Assistant / OpenAI-style names and legacy names
-_MODEL_ALIASES: dict[str, GeminiModels] = {
-    # gemini-webapi canonical names (pass-through)
-    "gemini-3-pro":              GeminiModels.PRO,
-    "gemini-3-flash":            GeminiModels.FLASH,
-    "gemini-3-flash-thinking":   GeminiModels.FLASH_THINKING,
-    # Legacy aliases
-    "gemini-3.0-pro":            GeminiModels.PRO,
-    "gemini-3.0-flash":          GeminiModels.FLASH,
-    "gemini-3.0-flash-thinking": GeminiModels.FLASH_THINKING,
-    # Home Assistant / common variants
-    "gemini-pro":                GeminiModels.PRO,
-    "gemini-ultra":              GeminiModels.PRO,
-    "gemini-flash":              GeminiModels.FLASH,
-    "gemini-1.0-pro":            GeminiModels.PRO,
-    "gemini-1.5-pro":            GeminiModels.PRO,
-    "gemini-1.5-pro-latest":     GeminiModels.PRO,
-    "gemini-1.5-flash":          GeminiModels.FLASH,
-    "gemini-1.5-flash-latest":   GeminiModels.FLASH,
-    "gemini-2.0-flash":          GeminiModels.FLASH,
-    "gemini-2.0-flash-exp":      GeminiModels.FLASH,
-    "gemini-2.0-pro":            GeminiModels.PRO,
-    "gemini-2.5-pro":            GeminiModels.PRO,
-    "gemini-2.5-flash":          GeminiModels.FLASH,
-}
-
-
-def _resolve_model(model_str: Optional[str]) -> GeminiModels:
-    """
-    Resolve any model string to a supported GeminiModels value.
-
-    Lookup priority:
-    1. Exact match in alias table (case-insensitive)
-    2. Substring heuristics: "thinking" → FLASH_THINKING, "pro" → PRO, "flash" → FLASH
-    3. Default: FLASH
-
-    Logs a warning when an unknown name is mapped so the operator can see what HA is sending.
-    """
-    if not model_str:
-        return GeminiModels.FLASH
-
-    lower = model_str.strip().lower()
-
-    # Exact alias match
-    if lower in _MODEL_ALIASES:
-        return _MODEL_ALIASES[lower]
-
-    # Substring heuristics (handles "gemini-3-pro-image-preview" etc.)
-    if "thinking" in lower:
-        resolved = GeminiModels.FLASH_THINKING
-    elif "pro" in lower:
-        resolved = GeminiModels.PRO
-    elif "flash" in lower:
-        resolved = GeminiModels.FLASH
-    else:
-        resolved = GeminiModels.FLASH
-
-    logger.warning(
-        f"Unknown model '{model_str}' → mapped to '{resolved.value}'. "
-        f"Add an explicit alias in _MODEL_ALIASES if needed."
-    )
-    return resolved
 
 
 # ---------------------------------------------------------------------------
@@ -193,22 +130,24 @@ async def list_models():
     try:
         gemini_client = get_gemini_client()
     except GeminiClientNotInitializedError:
-        # Fallback to local enum if client not initialized
+        # Fallback to the canonical name list if the client isn't initialized yet
         now = int(time.time())
         models = [
             {
-                "id": m.value,
+                "id": name,
                 "object": "model",
                 "created": now,
                 "owned_by": "google",
             }
-            for m in GeminiModels
+            for name in FALLBACK_MODELS
         ]
         return {"object": "list", "data": models}
 
     try:
-        # Get available models from the Gemini API client
+        # Get available models from the Gemini API client (dynamic discovery).
         available_models = gemini_client.client.list_models()
+        if not available_models:
+            raise ValueError("empty model list")
         now = int(time.time())
         models = [
             {
@@ -221,18 +160,17 @@ async def list_models():
             for model in available_models
         ]
         return {"object": "list", "data": models}
-    except (AttributeError, Exception) as e:
-        logger.warning(f"Failed to get models from Gemini API: {e}, falling back to enum")
-        # Fallback if list_models doesn't exist or fails
+    except Exception as e:
+        logger.warning(f"Failed to get models from Gemini API: {e}, falling back to default list")
         now = int(time.time())
         models = [
             {
-                "id": m.value,
+                "id": name,
                 "object": "model",
                 "created": now,
                 "owned_by": "google",
             }
-            for m in GeminiModels
+            for name in FALLBACK_MODELS
         ]
         return {"object": "list", "data": models}
 
@@ -252,7 +190,13 @@ async def translate_chat(request: GeminiRequest):
     if not session_manager:
         raise HTTPException(status_code=503, detail="Session manager is not initialized.")
     try:
-        response = await session_manager.get_response(request.model, request.message, request.files)
+        model_obj, extended = resolve_gemini_model(gemini_client.client, request.model)
+        response = await session_manager.get_response(
+            model_obj,
+            request.message,
+            request.files,
+            extended_thinking=extended or request.extended_thinking,
+        )
         return {"response": response.text}
     except Exception as e:
         logger.error(f"Error in /translate endpoint: {e}", exc_info=True)
@@ -368,9 +312,12 @@ async def chat_completions(request: OpenAIChatRequest):
     if not request.messages:
         raise HTTPException(status_code=400, detail="No messages provided.")
 
-    # Resolve model string → GeminiModels (handles HA aliases like "gemini-3-pro-image-preview")
-    gemini_model = _resolve_model(request.model)
-    model_value = gemini_model.value
+    # Resolve model string → AvailableModel (dynamic; falls back to account default if unknown).
+    model_obj, extended = resolve_gemini_model(gemini_client.client, request.model)
+    model_value = model_display(model_obj) or request.model or DEFAULT_MODEL
+    # request.extended_thinking (OpenAIChatRequest) overrides any name-based detection.
+    if request.extended_thinking is not None:
+        extended = request.extended_thinking
 
     # Auto-delete behavior for Gemini history:
     # - If request.store is set, honor it (store=False => temporary=True)
@@ -420,9 +367,10 @@ async def chat_completions(request: OpenAIChatRequest):
     try:
         response = await gemini_client.generate_content(
             message=final_prompt,
-            model=model_value,
+            model=model_obj,
             files=files_arg,
             temporary=temporary_mode,
+            extended_thinking=extended,
         )
 
         images = await serialize_response_images(

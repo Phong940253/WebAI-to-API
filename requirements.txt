@@ -1,6 +1,9 @@
 fastapi>=0.115.7
 uvicorn[standard]>=0.34.0
-gemini-webapi==2.0.0
+# gemini-webapi >= 2.0: dynamic model discovery (resolve_model / list_models /
+# extended_thinking). Pinned to the PyPI release so the Docker build (python:3.11-slim)
+# does not need `git`. 2.1.x requires python>=3.11; use 2.0.0 if you need 3.10 support.
+gemini-webapi==2.1.1
 browser-cookie3>=0.20.1
 httpx[http2]>=0.28.1,<0.29.0
 curl-cffi>=0.7.4

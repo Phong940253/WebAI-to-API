@@ -18,20 +18,14 @@ from app.services.gemini_client import (
 from app.services.curl_parser import parse_curl_command
 from app.services.log_broadcaster import SSELogBroadcaster
 from app.services.stats_collector import StatsCollector
+from app.services.model_resolver import (
+    DEFAULT_MODEL,
+    FALLBACK_MODELS,
+    available_model_names,
+)
 from app.services.telegram_notifier import TelegramNotifier
 
 router = APIRouter(prefix="/api/admin", tags=["Admin API"])
-
-_MODEL_ALIASES: dict[str, str] = {
-    "gemini-3.0-pro": "gemini-3-pro",
-    "gemini-3.0-flash": "gemini-3-flash",
-    "gemini-3.0-flash-thinking": "gemini-3-flash-thinking",
-}
-
-
-def _normalize_model_name(model: str) -> str:
-    normalized = model.strip().lower()
-    return _MODEL_ALIASES.get(normalized, normalized)
 
 # Read version once at import time
 def _read_version() -> str:
@@ -106,9 +100,14 @@ async def get_status():
 @router.get("/config")
 async def get_config():
     """Return current configuration (masking sensitive cookie values)."""
-    current_model = _normalize_model_name(
-        CONFIG["AI"].get("default_model_gemini", "gemini-3-pro")
-    )
+    current_model = CONFIG["AI"].get("default_model_gemini", DEFAULT_MODEL)
+    # Discover the account's available models dynamically; fall back to the
+    # canonical names if the client isn't initialized yet.
+    try:
+        gemini_client = get_gemini_client()
+        available_models = available_model_names(gemini_client.client)
+    except GeminiClientNotInitializedError:
+        available_models = list(FALLBACK_MODELS)
     return {
         "browser": CONFIG["Browser"].get("name", "chrome"),
         "model": current_model,
@@ -124,11 +123,7 @@ async def get_config():
             CONFIG["Cookies"].get("gemini_cookie_1psidts", "")
         ),
         "gemini_enabled": CONFIG.getboolean("EnabledAI", "gemini", fallback=True),
-        "available_models": [
-            "gemini-3-pro",
-            "gemini-3-flash",
-            "gemini-3-flash-thinking",
-        ],
+        "available_models": available_models,
     }
 
 
@@ -185,8 +180,13 @@ async def update_cookies(request: CookieUpdateRequest):
 
 @router.post("/config/model")
 async def update_model(request: ModelUpdateRequest):
-    """Update the default Gemini model."""
-    CONFIG["AI"]["default_model_gemini"] = _normalize_model_name(request.model)
+    """Update the default Gemini model.
+
+    The name is stored as-is; it is resolved against the account's dynamic model
+    list at request time (see app.services.model_resolver), so any name the client
+    sends (including legacy/variant names) is accepted and resolved gracefully.
+    """
+    CONFIG["AI"]["default_model_gemini"] = request.model.strip()
     write_config(CONFIG)
     return {"success": True, "model": CONFIG["AI"]["default_model_gemini"]}
 

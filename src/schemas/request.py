@@ -1,5 +1,4 @@
 # src/schemas/request.py
-from enum import Enum
 from typing import Any, List, Optional, Union
 from pydantic import BaseModel, Field
 
@@ -22,36 +21,38 @@ class ContentPart(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Gemini model enum
+# Default model
 # ---------------------------------------------------------------------------
 
-class GeminiModels(str, Enum):
-    """
-    Available Gemini models (gemini-webapi >= 1.19.2).
-    """
-
-    # Gemini 3 Series (current canonical names)
-    PRO = "gemini-3-pro"
-    FLASH = "gemini-3-flash"
-    FLASH_THINKING = "gemini-3-flash-thinking"
+# gemini-webapi (>= 2.0 / master) discovers available models dynamically per
+# account. These are the canonical discovered names; if the account exposes
+# different ones, the server still resolves them at runtime via list_models().
+DEFAULT_MODEL = "gemini-flash"
 
 
 class GeminiRequest(BaseModel):
     message: str
-    model: Optional[str] = Field(default=GeminiModels.FLASH.value, description="Model to use for Gemini.")
+    model: Optional[str] = Field(default=DEFAULT_MODEL, description="Model to use for Gemini (resolved dynamically).")
     files: Optional[List[str]] = []
+    extended_thinking: bool = Field(
+        default=False,
+        description="Enable extended thinking (requires an account that supports it).",
+    )
+
 
 class OpenAIChatRequest(BaseModel):
     messages: List[dict]
-    # Accept any string — unknown model names are resolved to the closest
-    # GeminiModels value in the endpoint (see _resolve_model in chat.py).
-    # This ensures compatibility with Home Assistant and other OpenAI clients
-    # that send model names like "gemini-3-pro-image-preview".
+    # Accept any model name. The endpoint resolves it dynamically (via
+    # client.resolve_model) and falls back to the account default when unknown,
+    # so Home Assistant and other OpenAI clients can send names like
+    # "gemini-3-pro-image-preview" without breaking.
     model: Optional[str] = None
     stream: Optional[bool] = False
     # OpenAI-compatible retention control.
     # store=False -> temporary mode (not saved in Gemini history).
     store: Optional[bool] = None
+    # Enable extended thinking for this request (Pro/Ultra tier accounts).
+    extended_thinking: Optional[bool] = None
 
 class Part(BaseModel):
     text: str

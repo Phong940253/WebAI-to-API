@@ -1,11 +1,25 @@
 ### Changelog – WebAI to API
 
-#### v0.x.x – Draft
+#### v0.8.0 – Unreleased
 
-##### Fixed
+##### Changed
 
-- Added missing `nodriver` and `platformdirs` dependencies to `pyproject.toml` for `g4f` server compatibility.
-- Unified server runner functions to implement a consistent and graceful shutdown mechanism.
+- **Upgraded `gemini-webapi` to the latest master (>= 2.0).** This introduces dynamic
+  model discovery per account via `list_models()` / `resolve_model()`.
+- **Hard switch to discovered model names** (`gemini-pro`, `gemini-flash`,
+  `gemini-flash-lite`). All `gemini-3-*` / `gemini-2-*` hardcoded names were removed.
+  Legacy/variant model names sent by clients are now resolved at request time and fall
+  back to the account default when unknown.
+- **Extended thinking is now a flag** (`extended_thinking`), not a separate model.
+  Enable it by appending `thinking` to a model name or by sending `extended_thinking: true`
+  on OpenAI `/chat/completions` requests.
+- The admin API now returns the account's dynamically discovered models instead of a
+  static list, so the dashboard dropdown stays in sync with what the account can use.
+
+##### Added
+
+- Centralized `app/services/model_resolver.py` for model resolution and extended-thinking
+  detection (replaces the per-endpoint alias tables).
 
 ---
 

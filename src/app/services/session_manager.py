@@ -39,7 +39,7 @@ class SessionManager:
         self.turn_count = 0
         self.lock = asyncio.Lock()
 
-    async def get_response(self, model, message, images):
+    async def get_response(self, model, message, images, extended_thinking: bool = False):
         lock_wait_seconds = CONFIG.getint("AI", "chat_lock_wait_seconds", fallback=12)
         lock_acquired = False
         try:
@@ -55,7 +55,11 @@ class SessionManager:
             )
 
         try:
-            model_value = model.value if hasattr(model, "value") else model
+            # Stable key for session reuse: a freshly-resolved AvailableModel is a new
+            # object every call, so key on model_id/model_name (not object identity),
+            # otherwise we'd rotate the session on every turn and lose multi-turn context.
+            model_key = getattr(model, "model_id", None) or getattr(model, "model_name", None) or str(model)
+            model_value = getattr(model, "model_name", None) or str(model)
             timeout_seconds = CONFIG.getint("AI", "chat_timeout_seconds", fallback=45)
             retry_attempts = max(0, CONFIG.getint("AI", "chat_retry_attempts", fallback=1))
             retry_delay_seconds = _read_retry_delay_seconds()
@@ -63,20 +67,24 @@ class SessionManager:
 
             for attempt in range(retry_attempts + 1):
                 # Start a new session if none exists or the model has changed
-                if self.session is None or self.model != model or self.turn_count >= max_turns:
+                if self.session is None or self.model != model_key or self.turn_count >= max_turns:
                     if self.session is not None:
                         logger.info(
                             f"Rotating Gemini chat session (model={model_value}, turns={self.turn_count}, max_turns={max_turns})."
                         )
-                    self.session = self.client.start_chat(model=model_value)
-                    self.model = model
+                    self.session = self.client.start_chat(model=model)
+                    self.model = model_key
                     self.turn_count = 0
                     logger.info(f"Started new Gemini chat session (model={model_value}).")
 
                 try:
                     started_at = time.perf_counter()
                     response = await asyncio.wait_for(
-                        self.session.send_message(prompt=message, files=images),
+                        self.session.send_message(
+                            prompt=message,
+                            files=images,
+                            extended_thinking=extended_thinking,
+                        ),
                         timeout=timeout_seconds,
                     )
                     elapsed = time.perf_counter() - started_at

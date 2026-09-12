@@ -38,14 +38,19 @@ from fastapi.responses import StreamingResponse
 
 from app.logger import logger
 from app.services.gemini_client import GeminiClientNotInitializedError, get_gemini_client
+from app.services.model_resolver import (
+    DEFAULT_MODEL,
+    model_display,
+    resolve_gemini_model,
+)
 from app.utils.image_utils import (
     cleanup_temp_files,
     get_temp_dir,
     serialize_response_images,
 )
 
-# Reuse model resolution and content extraction from chat.py
-from app.endpoints.chat import _resolve_model, _extract_multimodal_content, _get_cookies
+# Reuse content-extraction helpers from chat.py
+from app.endpoints.chat import _extract_multimodal_content, _get_cookies
 
 router = APIRouter()
 
@@ -195,8 +200,8 @@ async def create_response(request: dict):
         raise HTTPException(status_code=503, detail=str(e))
 
     # ── Resolve model ──────────────────────────────────────────────
-    gemini_model = _resolve_model(request.get("model"))
-    model_value = gemini_model.value
+    model_obj, extended = resolve_gemini_model(gemini_client.client, request.get("model"))
+    model_value = model_display(model_obj) or request.get("model") or DEFAULT_MODEL
     is_stream = bool(request.get("stream", False))
 
     # ── Parse input array ──────────────────────────────────────────
@@ -252,8 +257,9 @@ async def create_response(request: dict):
     try:
         response = await gemini_client.generate_content(
             message=final_prompt,
-            model=model_value,
+            model=model_obj,
             files=files_arg,
+            extended_thinking=extended,
         )
 
         images = await serialize_response_images(
