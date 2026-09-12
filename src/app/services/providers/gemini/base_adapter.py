@@ -13,6 +13,7 @@ def _gemini_compatibility(backend_name: str) -> OpenAICompatibilityCapabilities:
         fields={
             "max_tokens": OpenAIRequestCapability.ACCEPTED_NO_EFFECT,
             "max_completion_tokens": OpenAIRequestCapability.ACCEPTED_NO_EFFECT,
+            "temperature": OpenAIRequestCapability.ACCEPTED_NO_EFFECT,
             "reasoning_effort": OpenAIRequestCapability.ACCEPTED_NO_EFFECT,
             "stream_options": OpenAIRequestCapability.ACCEPTED_NO_EFFECT,
         },
