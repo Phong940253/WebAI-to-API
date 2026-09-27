@@ -5,6 +5,8 @@
 __pycache__
 .idea
 config.conf
+config.conf.*
+!config.conf.example
 .env.local
 .venv
 .playwright-browsers/

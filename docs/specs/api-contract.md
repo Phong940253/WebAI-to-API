@@ -68,7 +68,8 @@ values are validated before leases, browser work, normalization side effects, or
 | `max_tokens`, `max_completion_tokens` | Accepted, no effect | Accepted, no effect | Unsupported, HTTP 400 |
 | `reasoning_effort` | Accepted, no effect | Accepted, no effect | Unsupported, HTTP 400 |
 | `stream_options.include_usage` | Accepted, no effect | Accepted, no effect | Unsupported, HTTP 400 |
-| `temperature`, `top_p`, `top_k` | Unsupported, HTTP 400 | Unsupported, HTTP 400 | Unsupported, HTTP 400 |
+| `temperature` | Accepted, no effect | Accepted, no effect | Unsupported, HTTP 400 |
+| `top_p`, `top_k` | Unsupported, HTTP 400 | Unsupported, HTTP 400 | Unsupported, HTTP 400 |
 | `response_format`, `parallel_tool_calls` | Unsupported, HTTP 400 | Unsupported, HTTP 400 | Unsupported, HTTP 400 |
 | `tool_choice` | Unsupported, HTTP 400 | Unsupported, HTTP 400 | Supported and forwarded unchanged |
 
@@ -234,6 +235,7 @@ Authentication is a decoupled lifecycle managed via `AuthManager` and specialize
 - **Status Monitoring**: `/v1/auth/status` provides a unified view of provider health.
 - **Login Flow**: `/v1/auth/login` is a non-blocking trigger that initiates a browser-based workflow. It returns `202 Accepted` to indicate the process has started.
 - **Recovery**: Authentication state is checked by providers at the start of each request. If auth is missing, providers must raise a `503 Service Unavailable` with a clear instruction to log in.
+- **Guest Mode**: When `[Gemini].guest_mode` is `true` and no sign-in is available, the WebAPI client initializes an anonymous guest session (`/v1/auth/status` reports `GUEST`). Stateless/temporary surfaces (`/v1/chat/completions` without `store`, `/v1/stateless/chat/completions`, `/v1/temporary/chat/completions`, `/translate`) then serve guest requests, restricted to the guest default model (`gemini-3-flash-lite`) with HTTP 400 for any other model. Persistent surfaces (`store = true`, `conversation_id`) still require authentication and return HTTP 401 with `WWW-Authenticate: Bearer`.
 
 Authentication source handling is intentionally split by responsibility:
 

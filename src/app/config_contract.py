@@ -65,6 +65,7 @@ def _apply_defaults(config: configparser.ConfigParser) -> None:
             "backend": "webapi",
             "default_model": legacy_gemini_model or "gemini-3-flash",
             "extended_thinking": "false",
+            "guest_mode": "false",
         }
     else:
         if "backend" not in config["Gemini"]:
@@ -73,6 +74,8 @@ def _apply_defaults(config: configparser.ConfigParser) -> None:
             config["Gemini"]["default_model"] = legacy_gemini_model or "gemini-3-flash"
         if "extended_thinking" not in config["Gemini"]:
             config["Gemini"]["extended_thinking"] = "false"
+        if "guest_mode" not in config["Gemini"]:
+            config["Gemini"]["guest_mode"] = "false"
 
 
 def _apply_environment_overrides(config: configparser.ConfigParser) -> None:
@@ -111,6 +114,10 @@ def _validate_config(config: configparser.ConfigParser) -> None:
     config["Gemini"]["extended_thinking"] = normalize_strict_boolean(
         config["Gemini"].get("extended_thinking", "false"),
         "Gemini extended_thinking",
+    )
+    config["Gemini"]["guest_mode"] = normalize_strict_boolean(
+        config["Gemini"].get("guest_mode", "false"),
+        "Gemini guest_mode",
     )
     config["General"]["check_updates"] = normalize_strict_boolean(
         config["General"].get("check_updates", "true"),

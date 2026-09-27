@@ -131,14 +131,22 @@ class GeminiProvider(BaseProvider):
         return await self.webapi_adapter.list_conversations()
 
     async def list_models(self, allow_stale: bool = False) -> List[dict]:
-        from app.services.providers.gemini.shared import get_gemini_models
+        from app.services.providers.gemini.shared import (
+            get_gemini_models,
+            is_guest_session,
+        )
 
+        include_playwright = True
         try:
-            runtime_models = get_gemini_client().list_models()
+            runtime_client = get_gemini_client()
+            runtime_models = runtime_client.list_models()
+            # Playwright models require sign-in, so a guest session must not
+            # advertise them.
+            include_playwright = not is_guest_session(runtime_client)
         except GeminiClientNotInitializedError:
             runtime_models = None
 
-        return get_gemini_models(runtime_models)
+        return get_gemini_models(runtime_models, include_playwright=include_playwright)
 
     async def list_stateless_models(self, allow_stale: bool = False) -> List[dict]:
         from app.services.providers.gemini.shared import get_direct_webapi_gemini_models

@@ -40,8 +40,10 @@ from app.services.multimodal import (
 from app.services.providers.gemini.shared import (
     build_tools_prompt,
     ensure_gemini_client_ready,
+    is_guest_session,
     parse_tool_call,
     ToolCallParseStatus,
+    resolve_guest_default_model,
     validate_tool_history,
     validate_direct_webapi_model_name,
     validate_model_name,
@@ -161,6 +163,10 @@ def _resolve_stateless_chat_model(
         endpoint_name=endpoint_name,
         direct_webapi_only=direct_webapi_only,
     )
+    if request.model is None and is_guest_session(gemini_client):
+        # Guest sessions may only select their default model, so the configured
+        # [Gemini].default_model (which may not exist for guests) is overridden.
+        model = resolve_guest_default_model(gemini_client)
     if direct_webapi_only:
         validate_direct_webapi_model_name(model, gemini_client)
     else:
@@ -170,7 +176,9 @@ def _resolve_stateless_chat_model(
 
 def _ensure_direct_webapi_ready(gemini_client) -> None:
     try:
-        ensure_gemini_client_ready(gemini_client)
+        # Stateless/temporary execution is guest-eligible: it never persists
+        # conversation state, so [Gemini].guest_mode may serve it anonymously.
+        ensure_gemini_client_ready(gemini_client, allow_guest=True)
     except HTTPException as error:
         raise HTTPException(
             status_code=503,

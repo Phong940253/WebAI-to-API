@@ -48,10 +48,17 @@ runtime = playwright
 # Optional manual Gemini WebAPI authentication.
 # Prefer browser login which stores auth state in runtime/auth/gemini.json.
 # __Secure-1PSID is required; __Secure-1PSIDTS is optional.
+#
+# Guest mode (opt-in): when no sign-in is available, initialize an anonymous
+# Gemini session instead of failing. Guest sessions can only use the guest
+# default model (gemini-3-flash-lite) on stateless/temporary endpoints;
+# persistent chat (store/conversation_id) still requires sign-in.
+# Run `python clear_auth.py` to remove stored credentials and switch to guest.
 [Gemini]
 backend = webapi
 default_model = gemini-3-flash
 extended_thinking = false
+guest_mode = false
 __Secure-1PSID =
 __Secure-1PSIDTS =
 

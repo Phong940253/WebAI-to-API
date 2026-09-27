@@ -94,6 +94,7 @@ change Gemini WebAPI generation:
 | `max_completion_tokens` | Accepted, no effect |
 | `reasoning_effort` | Accepted, no effect |
 | `stream_options.include_usage` | Accepted, no effect |
+| `temperature` | Accepted, no effect |
 
 These controls are not forwarded as Gemini generation settings and do not
 synthesize usage output.
@@ -104,7 +105,6 @@ The following controls return HTTP 400 when supplied:
 
 | Control | Behavior |
 | --- | --- |
-| `temperature` | Unsupported |
 | `top_p` | Unsupported |
 | `top_k` | Unsupported |
 | `response_format` | Unsupported |
@@ -228,6 +228,12 @@ For pre-header request failures, the stateless endpoint uses this mapping:
 | Expected upstream/provider failure | 502 |
 | Malformed provider tool output | 502 |
 | Unexpected server defect | 500 |
+
+When `[Gemini].guest_mode` is enabled, an `UNAUTHENTICATED` client counts as
+ready for this endpoint: guest requests execute only with the guest default
+model (`gemini-3-flash-lite`), and any other model returns HTTP 400 with a
+guest-only detail. With guest mode disabled, `UNAUTHENTICATED` still maps to
+HTTP 503 as before.
 
 The endpoint must not silently fall back to stateful conversation continuation
 when stateless validation or execution fails.

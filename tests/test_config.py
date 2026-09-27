@@ -56,6 +56,35 @@ def test_gemini_extended_thinking_key_defaults_when_section_exists(tmp_path):
     assert config["Gemini"]["extended_thinking"] == "false"
 
 
+def test_gemini_guest_mode_defaults_when_missing(tmp_path):
+    config = load_config(write_config(tmp_path, "[Gemini]\nbackend = webapi\n"))
+
+    assert config["Gemini"]["guest_mode"] == "false"
+    assert config.getboolean("Gemini", "guest_mode") is False
+
+
+def test_gemini_guest_mode_defaults_when_section_missing(tmp_path):
+    config = load_config(write_config(tmp_path, "[General]\ncheck_updates = true\n"))
+
+    assert config["Gemini"]["guest_mode"] == "false"
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [("true", "true"), ("false", "false"), ("TRUE", "true"), ("False", "false"), ("  true  ", "true")],
+)
+def test_gemini_guest_mode_boolean_values_are_validated_and_normalized(tmp_path, value, expected):
+    config = load_config(write_config(tmp_path, f"[Gemini]\nguest_mode = {value}\n"))
+
+    assert config["Gemini"]["guest_mode"] == expected
+
+
+@pytest.mark.parametrize("value", ["yes", "no", "1", "0", "on", "off", "foo", ""])
+def test_gemini_guest_mode_invalid_value_fails_during_load(tmp_path, value):
+    with pytest.raises(ValueError, match=r"Invalid Gemini guest_mode value"):
+        load_config(write_config(tmp_path, f"[Gemini]\nguest_mode = {value}\n"))
+
+
 @pytest.mark.parametrize(
     "value, expected",
     [("true", "true"), ("false", "false"), ("TRUE", "true"), ("False", "false"), ("  true  ", "true")],

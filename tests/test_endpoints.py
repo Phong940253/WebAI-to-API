@@ -624,6 +624,7 @@ async def test_chat_completions_endpoint_gemini(mocker):
     mocker.patch("app.services.factory.ProviderFactory.get_provider", return_value=(mock_gemini, "gemini-3-flash"))
 
     payload = {
+        "store": True,
         "model": "gemini-3-flash",
         "messages": [{"role": "user", "content": "Hello"}]
     }
@@ -647,6 +648,7 @@ async def test_chat_completions_endpoint_atlas(mocker):
     mocker.patch("app.services.factory.ProviderFactory.get_provider", return_value=(mock_atlas, "MiniMax-M2"))
 
     payload = {
+        "store": True,
         "model": "atlas/MiniMax-M2",
         "messages": [{"role": "user", "content": "Hello"}]
     }
@@ -657,6 +659,35 @@ async def test_chat_completions_endpoint_atlas(mocker):
     assert response.status_code == 200
     assert response.json() == mock_response
     mock_atlas.chat_completions.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"model": "gemini-3-flash", "messages": [{"role": "user", "content": "Hello"}]},
+        {
+            "store": False,
+            "model": "gemini-3-flash",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    ],
+    ids=["store-omitted", "store-false"],
+)
+async def test_chat_completions_defaults_to_temporary_without_store(mocker, payload):
+    """No `store` (or store=false) routes to the temporary path, never the provider."""
+    handle_temporary = mocker.patch(
+        "app.endpoints.chat.handle_temporary_chat_completions",
+        mocker.AsyncMock(return_value={"object": "chat.completion"}),
+    )
+    get_provider = mocker.patch("app.services.factory.ProviderFactory.get_provider")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post("/v1/chat/completions", json=payload)
+
+    assert response.status_code == 200
+    handle_temporary.assert_awaited_once()
+    get_provider.assert_not_called()
 
 
 @pytest.mark.asyncio

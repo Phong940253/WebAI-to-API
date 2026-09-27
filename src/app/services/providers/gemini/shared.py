@@ -27,6 +27,37 @@ def resolve_extended_thinking(request: Any) -> bool:
         return requested
     return CONFIG.getboolean("Gemini", "extended_thinking", fallback=False)
 
+
+# The only model an unauthenticated guest session may select. Google exposes
+# the guest default under an account-specific ID; gemini-webapi resolves this
+# friendly name to it via the runtime catalog aliases.
+GUEST_DEFAULT_MODEL = "gemini-3-flash-lite"
+
+
+def guest_mode_enabled() -> bool:
+    """Return whether anonymous guest operation is enabled in [Gemini]."""
+    return CONFIG.getboolean("Gemini", "guest_mode", fallback=False)
+
+
+def is_guest_session(gemini_client: Any) -> bool:
+    """True when the runtime client holds an unauthenticated guest session."""
+    runtime_client = getattr(gemini_client, "client", None)
+    account_status = getattr(runtime_client, "account_status", None)
+    return getattr(account_status, "name", None) == "UNAUTHENTICATED"
+
+
+def resolve_guest_default_model(gemini_client: Any) -> str:
+    """Return the only selectable model of a guest session."""
+    try:
+        for runtime_model in gemini_client.list_models() or []:
+            if getattr(runtime_model, "is_available", None) is True:
+                model_name = getattr(runtime_model, "model_name", None)
+                if model_name:
+                    return model_name
+    except Exception as error:
+        logger.debug(f"Guest model catalog unavailable: {error}")
+    return GUEST_DEFAULT_MODEL
+
 def is_unknown_model_error(error: ValueError) -> bool:
     """Check if the error is due to an unknown model name."""
     return "Unknown model name" in str(error)
@@ -49,8 +80,16 @@ def _is_allowed_direct_webapi_model_id(model_id: str) -> bool:
     return True
 
 
-def _ensure_model_available(model: str, resolved_model: Any) -> None:
+def _ensure_model_available(model: str, resolved_model: Any, *, guest: bool = False) -> None:
     if getattr(resolved_model, "is_available", None) is not True:
+        if guest:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Guest sessions only support '{GUEST_DEFAULT_MODEL}'. "
+                    f"Model '{model}' requires sign-in."
+                ),
+            )
         raise HTTPException(
             status_code=400,
             detail=f"Model '{model}' is not available for the current Gemini account or session.",
@@ -69,9 +108,10 @@ def validate_model_name(model: Optional[str], gemini_client: Any = None) -> None
         from app.services.gemini_client import get_gemini_client
         gemini_client = get_gemini_client()
 
+    guest = is_guest_session(gemini_client)
     try:
         resolved_model = gemini_client.resolve_model(resolve_model_name(model))
-        _ensure_model_available(model, resolved_model)
+        _ensure_model_available(model, resolved_model, guest=guest)
     except ValueError as e:
         if is_unknown_model_error(e):
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -96,10 +136,11 @@ def validate_direct_webapi_model_name(model: Optional[str], gemini_client: Any) 
         )
 
     resolved_model = resolve_model_name(model)
+    guest = is_guest_session(gemini_client)
 
     try:
         resolved = gemini_client.resolve_model(resolved_model)
-        _ensure_model_available(model, resolved)
+        _ensure_model_available(model, resolved, guest=guest)
     except ValueError as e:
         if is_unknown_model_error(e):
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -110,11 +151,21 @@ def ensure_gemini_client_ready(
     gemini_client: Any,
     *,
     unauthenticated_detail: Optional[str] = None,
+    allow_guest: bool = False,
 ) -> None:
-    """Raise the standard HTTP error for a non-ready Gemini client."""
+    """Raise the standard HTTP error for a non-ready Gemini client.
+
+    ``allow_guest`` permits an unauthenticated guest session when
+    ``[Gemini].guest_mode`` is enabled. Only stateless/temporary request paths
+    pass it; persistent paths keep requiring an authenticated session.
+    """
     account_status = getattr(gemini_client.client, "account_status", None)
     status_name = getattr(account_status, "name", "UNKNOWN") if account_status else "UNKNOWN"
     if status_name == "AVAILABLE":
+        return
+
+    if status_name == "UNAUTHENTICATED" and allow_guest and guest_mode_enabled():
+        logger.info("Gemini client is an unauthenticated guest session; guest mode allows this request.")
         return
 
     logger.warning(f"Gemini client account status is '{status_name}'.")

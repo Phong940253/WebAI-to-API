@@ -43,7 +43,7 @@ does not support returns HTTP 400; controls are never silently forwarded as if s
 | `max_completion_tokens` | Accepted, no effect | Accepted, no effect | 400, not forwarded |
 | `reasoning_effort` | Accepted, no effect | Accepted, no effect | 400, not forwarded |
 | `stream_options.include_usage` | Accepted, no effect | Accepted, no effect | 400, not forwarded |
-| `temperature` | 400 | 400 | 400, not forwarded |
+| `temperature` | Accepted, no effect | Accepted, no effect | 400, not forwarded |
 | `top_p` | 400 | 400 | 400, not forwarded |
 | `top_k` | 400 | 400 | 400, not forwarded |
 | `response_format` | 400 | 400 | 400, not forwarded |
@@ -203,12 +203,12 @@ These controls are accepted for OpenAI client compatibility but have no effect o
 | `max_completion_tokens` | Accepted, no effect |
 | `reasoning_effort` | Accepted, no effect |
 | `stream_options.include_usage` | Accepted, no effect |
+| `temperature` | Accepted, no effect |
 
 These controls are unsupported and return HTTP 400:
 
 | Control | Behavior |
 | --- | --- |
-| `temperature` | Unsupported |
 | `top_p` | Unsupported |
 | `top_k` | Unsupported |
 | `response_format` | Unsupported |
@@ -471,6 +471,21 @@ For Docker deployments, use:
 ```bash
 poetry run python verify_login.py
 ```
+
+---
+
+## Guest Mode
+
+When `[Gemini] guest_mode = true` (see [Configuration](configuration.md)) and no stored sign-in is available, the runtime serves requests from an anonymous guest session instead of failing with HTTP 401/503. `GET /v1/auth/status` reports the WebAPI status as `GUEST`.
+
+Rules while a guest session is active:
+
+* **Model restriction**: only the guest default model (resolvable as `gemini-3-flash-lite`) is selectable. Other models return HTTP 400 with a `Guest sessions only support 'gemini-3-flash-lite'` detail; `/v1/models` advertises only the guest model and omits Playwright models.
+* **Allowed endpoints**: stateless/temporary execution — `/v1/chat/completions` without `store`, `/v1/stateless/chat/completions`, `/v1/temporary/chat/completions`, and `/translate`. A request without a model uses the guest default model.
+* **Persistent chat requires sign-in**: `store = true` or `conversation_id` returns HTTP 401 (`WWW-Authenticate: Bearer`).
+* **Authenticated priority**: an authenticated session always wins; guest initialization only happens when no valid login is found.
+
+Use `python clear_auth.py` to remove stored credentials and switch to guest mode, and `python clear_auth.py --restore` to restore the login backup.
 
 ---
 

@@ -9,6 +9,7 @@ import sys
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 from .webapi_client import MyGeminiClient
+from .shared import resolve_guest_default_model
 from app.services.browser.auth_loader import GeminiAuthStateLoader
 from app.config import CONFIG
 from app.logger import logger
@@ -334,6 +335,28 @@ def get_gemini_client_auth_source():
     return _gemini_client_auth_source
 
 
+def _clear_guest_cookie_cache() -> None:
+    """Best-effort removal of cached WebAPI cookies before guest initialization.
+
+    gemini-webapi reuses the newest cached cookie jar when a client is created
+    without credentials, which would silently re-authenticate a guest session
+    with previously stored cookies. Guest mode must never depend on leftover
+    credentials, so the cache is cleared before the cookieless init.
+    """
+    try:
+        from gemini_webapi.utils.rotate_1psidts import _get_cookie_cache_dir
+
+        cache_dir = _get_cookie_cache_dir()
+        for cache_file in cache_dir.glob(".cached_cookies_*.json"):
+            try:
+                cache_file.unlink()
+                logger.info(f"Guest mode: removed cached Gemini cookies at {cache_file}.")
+            except OSError as error:
+                logger.debug(f"Guest mode: could not remove cached cookie file {cache_file}: {error}")
+    except Exception as error:
+        logger.debug(f"Guest mode cookie cache cleanup skipped: {error}")
+
+
 async def init_gemini_client(
     *,
     registry_updater: Optional[Callable[[MyGeminiClient, int], Awaitable[None]]] = None,
@@ -512,6 +535,52 @@ async def init_gemini_client(
                     if client:
                         await client.close()
                         client = None
+
+            # Step 2b: Guest-mode initialization (opt-in, no login required).
+            # Runs only when no authenticated session was found. When guest mode
+            # is enabled, a stale unauthenticated cookie candidate is replaced by
+            # a clean cookieless session so anonymous operation never depends on
+            # leftover credentials.
+            if old_client is None and CONFIG.getboolean("Gemini", "guest_mode", fallback=False):
+                best_status_name = None
+                if best_client is not None:
+                    best_status = getattr(getattr(best_client, "client", None), "account_status", None)
+                    best_status_name = getattr(best_status, "name", None)
+
+                if best_client is None or best_status_name == "UNAUTHENTICATED":
+                    guest_client = None
+                    try:
+                        logger.info("Guest mode enabled: initializing unauthenticated Gemini client (no login required)...")
+                        _clear_guest_cookie_cache()
+                        guest_client = MyGeminiClient(proxy=gemini_proxy)
+                        await guest_client.init(verbose=True, auto_refresh=False)
+                        guest_status = getattr(getattr(guest_client, "client", None), "account_status", None)
+                        guest_status_name = getattr(guest_status, "name", "UNKNOWN")
+                        if guest_status_name in ("AVAILABLE", "UNAUTHENTICATED"):
+                            if best_client is not None:
+                                await best_client.close()
+                                best_client = None
+                                best_client_source_name = None
+                            best_client = guest_client
+                            best_client_source_name = "guest mode (no login)"
+                            guest_client = None
+                            logger.info(
+                                f"Guest-mode client initialized without login (status: {guest_status_name}); "
+                                f"only '{resolve_guest_default_model(best_client)}' is selectable."
+                            )
+                        else:
+                            logger.warning(
+                                f"Guest-mode client initialization returned status '{guest_status_name}'. "
+                                "Keeping the existing candidate."
+                            )
+                    except Exception as e:
+                        logger.warning(f"Guest-mode client initialization failed: {e}.")
+                    finally:
+                        if guest_client is not None:
+                            try:
+                                await guest_client.close()
+                            except Exception:
+                                pass
 
             # Step 3: Final Candidate Resolution
             if old_client is None and best_client is not None:

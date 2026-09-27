@@ -26,7 +26,7 @@ Authentication ownership is split by responsibility:
 | Caching | `AuthManager` | Owns cached auth status exposed by `/v1/auth/status`. |
 | Login and recovery orchestration | `AuthManager` plus provider auth strategy | `AuthManager` coordinates login/status flow; provider strategies perform provider-specific login and post-login recovery hooks. |
 
-`AuthLoader` and `GeminiAuthSelector` must not validate account status, create backend clients, activate browser contexts, or decide WebAPI guest-mode fallback. Backend implementations consume selected candidates and decide whether they are usable for that backend.
+`AuthLoader` and `GeminiAuthSelector` must not validate account status, create backend clients, activate browser contexts, or decide WebAPI guest-mode fallback. Backend implementations consume selected candidates and decide whether they are usable for that backend. Cookieless guest initialization (opt-in via `[Gemini].guest_mode`) is owned by the Gemini WebAPI client init waterfall: it runs only when no authenticated candidate exists, clears cached WebAPI cookies first, and publishes the session with the `guest mode (no login)` auth source. Request-time guest gating (guest-model restriction and stateless/temporary-only execution) is owned by the provider readiness and model-validation helpers in `shared.py`.
 
 Each auth strategy owns its own `provider_name` and may contribute provider-specific status reporting. The registry, not Gemini-specific code, determines which strategy is active for a given provider.
 

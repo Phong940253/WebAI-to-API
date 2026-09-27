@@ -164,7 +164,7 @@ def test_backend_capabilities_are_explicit():
     )
     assert (
         GEMINI_WEBAPI_OPENAI_COMPATIBILITY.status("temperature")
-        is OpenAIRequestCapability.UNSUPPORTED
+        is OpenAIRequestCapability.ACCEPTED_NO_EFFECT
     )
     assert (
         AtlasProvider.openai_compatibility.status("tool_choice")
@@ -187,7 +187,6 @@ def test_backend_capabilities_are_explicit():
 @pytest.mark.parametrize(
     ("field_name", "value"),
     [
-        ("temperature", 0),
         ("top_p", 0.5),
         ("top_k", 1),
         ("response_format", {"type": "json_object"}),
@@ -214,7 +213,7 @@ def test_gemini_capability_validator_reports_one_unsupported_field_in_order():
     with pytest.raises(HTTPException) as first_error:
         validate_openai_request_compatibility(
             _request(
-                temperature=0.2,
+                top_p=0.5,
                 response_format={"type": "json_object"},
             ),
             GEMINI_WEBAPI_OPENAI_COMPATIBILITY,
@@ -223,7 +222,7 @@ def test_gemini_capability_validator_reports_one_unsupported_field_in_order():
     assert first_error.value.status_code == 400
     assert (
         first_error.value.detail
-        == "Unsupported parameter: temperature (code: unsupported_parameter)."
+        == "Unsupported parameter: top_p (code: unsupported_parameter)."
     )
 
     with pytest.raises(HTTPException) as second_error:
@@ -244,7 +243,6 @@ def test_gemini_capability_validator_reports_one_unsupported_field_in_order():
 @pytest.mark.parametrize(
     ("field_name", "value"),
     [
-        ("temperature", 0),
         ("top_p", 0.5),
         ("top_k", 1),
         ("response_format", {"type": "json_object"}),
@@ -291,16 +289,17 @@ async def test_primary_route_rejects_unsupported_controls_before_provider_execut
         response = await client.post(
             "/v1/chat/completions",
             json={
+                "store": True,
                 "model": "gemini-3-flash",
                 "messages": _messages(),
-                "temperature": 0,
+                "top_p": 0.5,
             },
         )
 
     assert response.status_code == 400
     assert (
         response.json()["detail"]
-        == "Unsupported parameter: temperature (code: unsupported_parameter)."
+        == "Unsupported parameter: top_p (code: unsupported_parameter)."
     )
     provider.chat_completions.assert_not_awaited()
 
@@ -314,7 +313,7 @@ async def test_gemini_routes_report_unsupported_parameters_one_at_a_time(mocker,
     payload = {
         "model": "gemini-3-flash",
         "messages": _messages(),
-        "temperature": 0.2,
+        "top_p": 0.5,
         "response_format": {"type": "json_object"},
     }
 
@@ -322,13 +321,13 @@ async def test_gemini_routes_report_unsupported_parameters_one_at_a_time(mocker,
         response = await client.post(path, json=payload)
         retry_response = await client.post(
             path,
-            json={key: value for key, value in payload.items() if key != "temperature"},
+            json={key: value for key, value in payload.items() if key != "top_p"},
         )
 
     assert response.status_code == 400
     assert (
         response.json()["detail"]
-        == "Unsupported parameter: temperature (code: unsupported_parameter)."
+        == "Unsupported parameter: top_p (code: unsupported_parameter)."
     )
     assert retry_response.status_code == 400
     assert (
@@ -476,6 +475,7 @@ async def test_atlas_route_rejects_unforwarded_controls_before_provider_executio
         response = await client.post(
             "/v1/chat/completions",
             json={
+                "store": True,
                 "model": "atlas/MiniMax-M2",
                 "messages": _messages(),
                 "max_tokens": 100,
@@ -499,6 +499,7 @@ async def test_atlas_route_rejects_unforwarded_controls_before_provider_executio
         ("max_completion_tokens", 100),
         ("reasoning_effort", "high"),
         ("stream_options", {"include_usage": True}),
+        ("temperature", 0.5),
     ],
 )
 async def test_gemini_compatibility_noops_are_not_forwarded(
@@ -659,5 +660,5 @@ async def test_openapi_exposes_audited_controls_and_400_contract():
     ]
     assert (
         unsupported_example["value"]["detail"]
-        == "Unsupported parameter: temperature (code: unsupported_parameter)."
+        == "Unsupported parameter: top_p (code: unsupported_parameter)."
     )

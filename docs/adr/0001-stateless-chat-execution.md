@@ -159,7 +159,8 @@ The implemented request-control policy is:
 | `max_tokens`, `max_completion_tokens` | Accepted, no effect |
 | `reasoning_effort` | Accepted, no effect |
 | `stream_options.include_usage` | Accepted, no effect |
-| `temperature`, `top_p`, `top_k` | HTTP 400 unsupported |
+| `temperature` | Accepted, no effect |
+| `top_p`, `top_k` | HTTP 400 unsupported |
 | `response_format`, `parallel_tool_calls` | HTTP 400 unsupported |
 | `tool_choice` | HTTP 400 unsupported |
 

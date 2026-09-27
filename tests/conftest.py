@@ -58,6 +58,17 @@ def reset_gemini_lifecycle_state():
         pass
 
 
+@pytest.fixture(autouse=True)
+def guest_mode_disabled(monkeypatch):
+    """Pin [Gemini].guest_mode off so tests stay independent of local config.
+
+    Guest-mode tests opt back in with their own monkeypatch.setitem call.
+    """
+    from app.config import CONFIG
+
+    monkeypatch.setitem(CONFIG["Gemini"], "guest_mode", "false")
+
+
 @pytest.fixture
 def install_registry_generation():
     """Register test client generation without publishing a current client."""

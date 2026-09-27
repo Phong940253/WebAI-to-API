@@ -78,7 +78,9 @@ async def translate_chat(request: GeminiRequest):
     try:
         async with lease:
             gemini_client = lease.client
-            ensure_gemini_client_ready(gemini_client)
+            # /translate executes temporary, history-free requests, so it is
+            # guest-eligible when [Gemini].guest_mode is enabled.
+            ensure_gemini_client_ready(gemini_client, allow_guest=True)
             validate_direct_webapi_model_name(request.model, gemini_client)
             response = await gemini_client.generate_content(
                 request.message,

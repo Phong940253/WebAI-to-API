@@ -134,6 +134,7 @@ check_updates = true
 backend = webapi
 default_model = gemini-3-flash
 extended_thinking = false
+guest_mode = false
 
 [EnabledAI]
 gemini = true
@@ -164,8 +165,20 @@ Set `check_updates = false` to disable all startup Git/network activity. Values 
 | `backend`       | Execution backend (`webapi` or `playwright`) |
 | `default_model` | Default Gemini model                         |
 | `extended_thinking` | Strict boolean `true`/`false` default for stateful Gemini WebAPI and Playwright requests when request-scoped `provider_options.gemini.extended_thinking` is omitted. |
+| `guest_mode` | Strict boolean `true`/`false`, default `false`. When enabled and no sign-in is available, the runtime initializes an anonymous guest session instead of failing. |
 
 Precedence is request option, then `[Gemini].extended_thinking`, then `false` when the key is missing. The value is case-insensitive, trimmed, and stored canonically as lowercase `true` or `false`. Stateless and temporary Gemini WebAPI endpoints reject `provider_options.gemini` and do not use this setting.
+
+#### Guest Mode
+
+`guest_mode = true` allows the server to run without any stored Gemini credentials. Behavior while a guest session is active:
+
+* Only the guest default model is selectable (advertised by `/v1/models`, resolvable as `gemini-3-flash-lite`); any other model returns HTTP 400.
+* Stateless/temporary execution (`/v1/chat/completions` without `store`, `/v1/stateless/chat/completions`, `/v1/temporary/chat/completions`, `/translate`) works; a request without a model uses the guest default model.
+* Persistent chat (`store = true`, `conversation_id`) returns HTTP 401 until you sign in.
+* An authenticated session always takes priority: guest initialization only happens when no valid login is found.
+
+Use `python clear_auth.py` to remove stored credentials (login state, cookie cache, config cookies) and enable `guest_mode`; `python clear_auth.py --restore` undoes the login-state backup. Restart the server afterwards.
 
 #### Supported Cookie Keys (in `[Gemini]` section)
 

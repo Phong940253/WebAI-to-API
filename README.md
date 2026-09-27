@@ -63,6 +63,7 @@ Review the generated `config.conf`. Core Gemini settings include:
 backend = webapi
 default_model = gemini-3-flash
 extended_thinking = false
+guest_mode = false
 ```
 
 See the [Configuration Guide](docs/configuration.md) for provider, proxy, logging, and authentication settings.
@@ -76,6 +77,8 @@ poetry run python verify_login.py
 ```
 
 Gemini WebAPI can also use configured cookies. See the [Configuration Guide](docs/configuration.md) for authentication methods. For Docker authentication, see the [Docker Deployment Guide](docs/docker.md).
+
+To run without any sign-in, set `[Gemini] guest_mode = true` and run `python clear_auth.py` to remove stored credentials; only `gemini-3-flash-lite` is usable then. See [Guest Mode](docs/configuration.md#guest-mode). Restore the login backup with `python clear_auth.py --restore`.
 
 ### 4. Start the Server
 
